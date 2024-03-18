@@ -58,6 +58,7 @@ class VLLMModelConfig(TypedDict, total=False):
     max_num_seqs: int
     quantization: Optional[str]
     max_model_len: Optional[int]
+    use_flash_attn: Optional[bool]
 
 
 class VLLMGenerateConfig(TypedDict, total=False):
@@ -172,6 +173,7 @@ class VLLMModel(LLM):
         model_config.setdefault("max_num_seqs", 256)
         model_config.setdefault("quantization", None)
         model_config.setdefault("max_model_len", 4096)
+        model_config.setdefault("use_flash_attn", True)
 
         return model_config
 
