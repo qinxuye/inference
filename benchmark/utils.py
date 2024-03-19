@@ -131,6 +131,9 @@ def sample_requests(
         if prompt_len < 512 or prompt_len + output_len < 1024:
             # Prune too short sequences.
             continue
+        if prompt_len + output_len > 3900:
+            # Prune too long sequences
+            continue
         filtered_dataset.append((prompt, prompt_len, output_len))
 
     # Sample the requests.
