@@ -12,7 +12,11 @@ def next_token_chooser(logits: torch.Tensor):
 
 
 def generate_token(
-    model, tokenizer, cache_manager, batch: Batch, max_out_length, rank, ignore_eos
+    model,
+    cache_manager,
+    batch: Batch,
+    rank,
+    get_next_token_methods=None,
 ):
     input_ids = batch.batch_input_ids.npu()
     position_ids = batch.batch_position_ids.npu()
@@ -57,8 +61,14 @@ def generate_token(
             torch.save(
                 logits.cpu(), os.path.join(ENV.logits_save_folder, logits_save_filename)
             )
-    next_token = next_token_chooser(logits)
-    next_token_list = next_token.tolist()
+    if get_next_token_methods is None:
+        next_token = next_token_chooser(logits)
+        next_token_list = next_token.tolist()
+    else:
+        next_token_list = []
+        for i, logit in enumerate(logits):
+            next_token_list.append(get_next_token_methods[i](logit))
+        next_token = torch.tensor(next_token_list)
 
     for i, req in enumerate(batch.req_list):
         req.out_token_list.append(next_token_list[i])
@@ -74,8 +84,8 @@ def generate_token(
     batch.context_length += 1
     batch.max_s += 1
 
-    eos_token_id = tokenizer.eos_token_id
-    return batch.filter(eos_token_id, max_out_length, cache_manager, ignore_eos)
+    # eos_token_id = tokenizer.eos_token_id
+    # return batch.filter(eos_token_id, max_out_length, cache_manager)
 
 
 def generate_req(
@@ -97,7 +107,6 @@ def generate_req(
     generate_batch_size = 0
     max_generate_batch_size = 0
 
-    benchmark_timelist = []
     generate_batches = []
     prefill_benchmark_timelist = []
     decoder_benchmark_timelist = []

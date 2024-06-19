@@ -25,9 +25,9 @@ from atb_llm.utils.cpu_binding import NpuHbmInfo
 from atb_llm.utils.env import ENV
 from atb_llm.utils.log import logger, print_log
 
-from .server.cache import CacheConfig, CacheManager, ModelConfig
-from .server.generate import decode_token, generate_req
-from .server.request import request_from_text, request_from_token
+from .cache import CacheConfig, CacheManager, ModelConfig
+from .generate import decode_token, generate_req
+from .request import request_from_text, request_from_token
 
 
 class PARunner:
@@ -149,7 +149,7 @@ class PARunner:
             raise ZeroDivisionError from e
         cache_config = CacheConfig(self.warm_up_num_blocks, self.block_size)
         self.cache_manager = CacheManager(cache_config, self.model_config)
-        logits = self.model.forward(
+        self.model.forward(
             input_ids=input_ids,
             position_ids=position_ids,
             is_prefill=cu_seqlen_prefill is not None,
@@ -325,7 +325,7 @@ class PARunner:
                 with_flops=False,
                 with_modules=False,
                 experimental_config=experimental_config,
-            ) as prof:
+            ) as _:
                 generate_req(
                     req_list,
                     self.model,

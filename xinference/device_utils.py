@@ -106,7 +106,7 @@ def get_available_device_env_name():
 
 def gpu_count():
     if torch.cuda.is_available():
-        cuda_visible_devices_env = os.getenv("CUDA_VISIBLE_DEVICES", None)
+        cuda_visible_devices_env = os.getenv(DEVICE_TO_ENV_NAME["cuda"], None)
 
         if cuda_visible_devices_env is None:
             return torch.cuda.device_count()
@@ -119,6 +119,15 @@ def gpu_count():
     elif is_xpu_available():
         return torch.xpu.device_count()
     elif is_npu_available():
-        return torch.npu.device_count()
+        npu_visible_devices_env = os.getenv(DEVICE_TO_ENV_NAME["npu"], None)
+
+        if npu_visible_devices_env is None:
+            return torch.npu.device_count()
+
+        npu_visible_devices = (
+            npu_visible_devices_env.split(",") if npu_visible_devices_env else []
+        )
+
+        return min(torch.npu.device_count(), len(npu_visible_devices))
     else:
         return 0

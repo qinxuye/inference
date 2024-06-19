@@ -105,7 +105,7 @@ class Batch:
         while len(batches) > 1:
             del batches[1]
 
-    def filter(self, eos_token_id, max_out_length, cache_manager, ignore_eos):
+    def filter(self, cache_manager):
         if self.batch_num == 0:
             logger.error("batch.batch_num is 0")
             raise AssertionError
@@ -114,9 +114,7 @@ class Batch:
         finish_list = []
 
         for i, req in enumerate(self.req_list):
-            if (not ignore_eos and req.out_token_list[-1] == eos_token_id) or len(
-                req.out_token_list
-            ) >= max_out_length:
+            if req.stopped:
                 cache_manager.free(req)
                 finish_num += 1
                 finish_list.append(i)
