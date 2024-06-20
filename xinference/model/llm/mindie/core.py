@@ -93,7 +93,7 @@ class MindIEModel(LLM):
             "--port",
             str(port),
             "--max_batch_size",
-            self._model_config["max_batch_size"],
+            str(self._model_config["max_batch_size"]),
         ]
         logger.info("Launch MindIE with command, %s", commands)
         self._process = process = subprocess.Popen(commands)
