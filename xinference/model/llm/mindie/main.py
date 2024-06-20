@@ -90,7 +90,7 @@ def serve(pa_runner: StreamPARunner, q: Queue):
                 # set done event
                 done_event.set()  # type: ignore
 
-            # update req_id_req
+            # update req_id_to_req
             for req in req_list:
                 if req.stopped:
                     req_id_to_req.pop(req.request_id, None)
@@ -187,10 +187,9 @@ class MindIEModelActor(xo.StatelessActor):
         else:
             from .scheduler import XINFERENCE_NON_STREAMING_ABORT_FLAG
 
-            assert self._loop is not None
             future: ConcurrentFuture = ConcurrentFuture()
             await self._scheduler_ref.add_request(prompt, future, *args, **kwargs)  # type: ignore
-            fut: asyncio.Future = asyncio.wrap_future(future, loop=self._loop)
+            fut: asyncio.Future = asyncio.wrap_future(future)
             result = await fut
             if result == XINFERENCE_NON_STREAMING_ABORT_FLAG:
                 raise RuntimeError(

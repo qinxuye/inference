@@ -160,6 +160,7 @@ class StreamPARunner(PARunner):
             self.tokenizer,
             self._context_len,
             self.rank,
+            self.world_size,
             self.block_size,
             self.cache_manager,
             self._req_to_batch,

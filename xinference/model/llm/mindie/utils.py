@@ -68,9 +68,11 @@ def _batch_inference_one_step_internal(
     tokenizer,
     context_len: int,
     rank: int,
+    world_size: int,
     block_size: int,
     cache_manager: CacheManager,
     req_to_batches: weakref.WeakKeyDictionary,
+    decode_round: int = 16,
     bos_flag: str = "<bos_stream>",
     eos_flag: str = "<eos_stream>",
 ):
@@ -161,142 +163,169 @@ def _batch_inference_one_step_internal(
             req_to_batches[r] = batches[0]
     get_next_token_methods = []
     max_out_length = []
-    for i, r in enumerate(batches[0].req_list):
-        (
-            max_new_tokens,
-            stream_interval,
-            include_usage,
-            stop_str,
-            stop_token_ids,
-            temperature,
-            repetition_penalty,
-            top_p,
-            top_k,
-        ) = generate_config_mapping[r]
-        get_next_token_method = lambda _logits: _get_token_from_logits(
-            r, _logits, temperature, repetition_penalty, top_p, top_k
-        )
-        get_next_token_methods.append(get_next_token_method)
-        max_new_tokens = int(
-            r.sanitized_generate_config.get("max_out_length", max_tokens_field.default)
-        )
-        max_out_length.append(max_new_tokens)
-
-    generate_token(
-        model,
-        cache_manager,
-        batches[0],
-        rank,
-        get_next_token_methods=get_next_token_methods,
-    )
-
+    stop_token_mapping: Dict[InferenceRequest, int] = {}
     output_mapping: Dict[InferenceRequest, str] = {}
-    for i, r in enumerate(valid_req_list):
-        (
-            max_new_tokens,
-            stream_interval,
-            include_usage,
-            stop_str,
-            stop_token_ids,
-            temperature,
-            repetition_penalty,
-            top_p,
-            top_k,
-        ) = generate_config_mapping[r]
-        token = r.out_token_list[-1]
-        r.append_new_token(token)
-
-        output = None
-        if not r.stopped:
-            stopped = token in stop_token_ids
-
-            if stopped:
-                finish_reason = "stop"
-            elif len(r.new_tokens) >= max_out_length[i]:
-                finish_reason = "length"
-                stopped = True
-            else:
-                finish_reason = None
-
-            # handle stop str
-            if stop_str and r not in output_mapping:
-                output = tokenizer.decode(
-                    r.new_tokens,
-                    skip_special_tokens=True,
-                    spaces_between_special_tokens=False,
-                    clean_up_tokenization_spaces=True,
+    # only decode phase, run rounds
+    for _i in range(decode_round):
+        for i, r in enumerate(batches[0].req_list):
+            (
+                max_new_tokens,
+                stream_interval,
+                include_usage,
+                stop_str,
+                stop_token_ids,
+                temperature,
+                repetition_penalty,
+                top_p,
+                top_k,
+            ) = generate_config_mapping[r]
+            get_next_token_method = lambda _logits: _get_token_from_logits(
+                r, _logits, temperature, repetition_penalty, top_p, top_k
+            )
+            get_next_token_methods.append(get_next_token_method)
+            max_new_tokens = int(
+                r.sanitized_generate_config.get(
+                    "max_out_length", max_tokens_field.default
                 )
-                if isinstance(stop_str, str):
-                    stop_str = [stop_str]
-                for stop in stop_str:
-                    pos = output.rfind(stop)
-                    if pos != -1:
-                        output = output[:pos]
-                        output_mapping[r] = output
-                        stopped = True
-                        finish_reason = "stop"
-                        break
+            )
+            max_out_length.append(max_new_tokens)
 
-            r.stopped = stopped
-            r.finish_reason = finish_reason
+        generate_token(
+            model,
+            cache_manager,
+            batches[0],
+            rank,
+            get_next_token_methods=get_next_token_methods,
+        )
 
-        if r.stream:
-            """
-            Note that you can't just decode based on the newest r.new_tokens here,
-            which may destroy the integrity of the parsed characters,
-            and at the same time is not good at handling some special characters.
-            So the implementation here is to decode all the tokens that have been generated each time,
-            and then take the slice.
-            """
-            if r.stopped or len(r.new_tokens) % stream_interval == 0:
-                if output is None:
+        for i, r in enumerate(valid_req_list):
+            (
+                max_new_tokens,
+                stream_interval,
+                include_usage,
+                stop_str,
+                stop_token_ids,
+                temperature,
+                repetition_penalty,
+                top_p,
+                top_k,
+            ) = generate_config_mapping[r]
+            token = r.out_token_list[-1]
+            r.append_new_token(token)
+
+            output = None
+            if not r.stopped:
+                stopped = token in stop_token_ids
+
+                if stopped:
+                    finish_reason = "stop"
+                elif len(r.new_tokens) >= max_out_length[i]:
+                    finish_reason = "length"
+                    stopped = True
+                else:
+                    finish_reason = None
+
+                # handle stop str
+                if stop_str and r not in output_mapping:
                     output = tokenizer.decode(
                         r.new_tokens,
                         skip_special_tokens=True,
                         spaces_between_special_tokens=False,
                         clean_up_tokenization_spaces=True,
                     )
+                    if isinstance(stop_str, str):
+                        stop_str = [stop_str]
+                    for stop in stop_str:
+                        pos = output.rfind(stop)
+                        if pos != -1:
+                            output = output[:pos]
+                            output_mapping[r] = output
+                            stopped = True
+                            finish_reason = "stop"
+                            break
 
-                if r.last_output_length == 0:
-                    r.completion.append(bos_flag)
+                r.stopped = stopped
+                r.finish_reason = finish_reason
 
-                # this special character is mainly for qwen
-                output = output.strip("�")
-                output = output[r.last_output_length :]
-                r.last_output_length += len(output)
+            if r.stopped and r not in stop_token_mapping and r not in output_mapping:
+                stop_token_mapping[r] = _i + 1
 
-                completion_chunk = _get_completion_chunk(
-                    output, r.finish_reason, model_uid, r, False
-                )
-                r.completion.append(completion_chunk)
-                if r.stopped:
-                    r.completion.append(eos_flag)
+            if r.stream:
+                """
+                Note that you can't just decode based on the newest r.new_tokens here,
+                which may destroy the integrity of the parsed characters,
+                and at the same time is not good at handling some special characters.
+                So the implementation here is to decode all the tokens that have been generated each time,
+                and then take the slice.
+                """
+                if r.stopped or len(r.new_tokens) % stream_interval == 0:
+                    if output is None:
+                        output = tokenizer.decode(
+                            r.new_tokens,
+                            skip_special_tokens=True,
+                            spaces_between_special_tokens=False,
+                            clean_up_tokenization_spaces=True,
+                        )
 
-                # last round, handle stream result
-                # append usage information when enable `include_usage` for OPENAI API compatibility
-                # The reason for counting the usage in the last round of the iteration is that,
-                # these tokens are real generated and should be counted.
-                if r.stopped and include_usage:
-                    r.completion.append(
-                        _get_completion_chunk("", r.finish_reason, model_uid, r, True)
+                    if r.last_output_length == 0:
+                        r.completion.append(bos_flag)
+
+                    # this special character is mainly for qwen
+                    output = output.strip("�")
+                    output = output[r.last_output_length :]
+                    r.last_output_length += len(output)
+
+                    completion_chunk = _get_completion_chunk(
+                        output, r.chunk_id, r.finish_reason, model_uid, r, False
                     )
-        else:
-            # last round, handle non-stream result
-            if r.stopped:
-                outputs = (
-                    tokenizer.decode(
-                        r.new_tokens[:-1]
-                        if r.finish_reason == "stop"
-                        else r.new_tokens,
-                        skip_special_tokens=True,
-                        spaces_between_special_tokens=False,
-                        clean_up_tokenization_spaces=True,
+                    r.completion.append(completion_chunk)
+                    if r.stopped:
+                        r.completion.append(eos_flag)
+
+                    # last round, handle stream result
+                    # append usage information when enable `include_usage` for OPENAI API compatibility
+                    # The reason for counting the usage in the last round of the iteration is that,
+                    # these tokens are real generated and should be counted.
+                    if r.stopped and include_usage:
+                        r.completion.append(
+                            _get_completion_chunk(
+                                "", r.chunk_id, r.finish_reason, model_uid, r, True
+                            )
+                        )
+            else:
+                # last round, handle non-stream result
+                if r.stopped and _i == decode_round - 1:
+                    invalid_token_num = decode_round - stop_token_mapping[r]
+                    outputs = (
+                        tokenizer.decode(
+                            r.new_tokens[: -(invalid_token_num + 1)]
+                            if r.finish_reason == "stop"
+                            else r.new_tokens[:-invalid_token_num],
+                            skip_special_tokens=True,
+                            spaces_between_special_tokens=False,
+                            clean_up_tokenization_spaces=True,
+                        )
+                        if r not in output_mapping
+                        else output_mapping[r]
                     )
-                    if r not in output_mapping
-                    else output_mapping[r]
-                )
-                completion = _get_completion(outputs, r.finish_reason, model_uid, r)
-                r.completion = [completion]
+                    completion = _get_completion(
+                        outputs, r.chunk_id, r.finish_reason, model_uid, r
+                    )
+                    r.completion = [completion]
+
+    # synchronize stop status
+    if rank == 0:
+        stops = [r.stopped for r in valid_req_list]
+        objects = [stops] * world_size
+    else:
+        objects = []
+    if world_size > 1:
+        output_objects: List[list] = [[]]
+        torch.distributed.scatter_object_list(output_objects, objects)
+        if rank > 0:
+            stops = output_objects[0]
+            for r, stop in zip(valid_req_list, stops):
+                r.stopped = stop
 
     # filter the finished requests
     batches[0].filter(cache_manager)
@@ -316,6 +345,7 @@ def batch_inference_one_step(
     tokenizer,
     context_len: int,
     rank: int,
+    world_size: int,
     block_size: int,
     cache_manager: CacheManager,
     req_to_batches: weakref.WeakKeyDictionary,
@@ -330,6 +360,7 @@ def batch_inference_one_step(
             tokenizer,
             context_len,
             rank,
+            world_size,
             block_size,
             cache_manager,
             req_to_batches,

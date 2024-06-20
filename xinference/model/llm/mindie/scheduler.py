@@ -49,6 +49,9 @@ class InferenceRequest(_InferenceRequest):
         self.slot_tables = None
         self.out_token_list = []
 
+    def __repr__(self):
+        return f"InstanceRequest (request_id={self.request_id})"
+
     def __getstate__(self):
         d = self.__dict__.copy()
         fq = d.pop("future_or_queue")
