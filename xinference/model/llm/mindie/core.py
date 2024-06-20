@@ -92,6 +92,8 @@ class MindIEModel(LLM):
             "xinference.model.llm.mindie.main",
             "--port",
             str(port),
+            "--max_batch_size",
+            self._model_config["max_batch_size"],
         ]
         logger.info("Launch MindIE with command, %s", commands)
         self._process = process = subprocess.Popen(commands)
