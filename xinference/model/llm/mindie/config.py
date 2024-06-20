@@ -18,6 +18,7 @@ from typing import List, Optional, TypedDict, Union
 class MindIEModelConfig(TypedDict, total=False):
     context_length: int
     tensor_parallel_size: int
+    max_batch_size: int
 
 
 class MindIEGenerateConfig(TypedDict, total=False):

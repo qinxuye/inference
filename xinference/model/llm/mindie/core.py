@@ -147,6 +147,7 @@ class MindIEModel(LLM):
         cuda_count = gpu_count()
         model_config.setdefault("tensor_parallel_size", cuda_count)
         model_config.setdefault("context_length", 4096)
+        model_config.setdefault("max_batch_size", 15)
 
         return model_config
 
