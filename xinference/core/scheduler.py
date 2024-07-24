@@ -334,8 +334,6 @@ class SchedulerActor(xo.StatelessActor):
             req.stopped = True
 
     def _handle_request(self) -> Optional[List[InferenceRequest]]:
-        if self._model is None:
-            return None
         max_num_seqs = self.get_max_num_seqs()
         # currently, FCFS strategy
         running_list: List[InferenceRequest] = []

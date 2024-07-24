@@ -34,6 +34,7 @@ from .llm_family import (
     BUILTIN_MODELSCOPE_LLM_FAMILIES,
     LLAMA_CLASSES,
     LLM_ENGINES,
+    MINDIE_CLASSES,
     MLX_CLASSES,
     SGLANG_CLASSES,
     SUPPORTED_ENGINES,
@@ -113,6 +114,7 @@ def generate_engine_config_by_model_family(model_family):
 
 def _install():
     from .ggml.llamacpp import LlamaCppChatModel, LlamaCppModel
+    from .mindie.core import MindIEChatModel
     from .mlx.core import MLXChatModel, MLXModel
     from .pytorch.baichuan import BaichuanPytorchChatModel
     from .pytorch.chatglm import ChatglmPytorchChatModel
@@ -148,6 +150,7 @@ def _install():
     )
     SGLANG_CLASSES.extend([SGLANGModel, SGLANGChatModel])
     VLLM_CLASSES.extend([VLLMModel, VLLMChatModel])
+    MINDIE_CLASSES.extend([MindIEChatModel])
     MLX_CLASSES.extend([MLXModel, MLXChatModel])
     TRANSFORMERS_CLASSES.extend(
         [
@@ -179,6 +182,7 @@ def _install():
     SUPPORTED_ENGINES["Transformers"] = TRANSFORMERS_CLASSES
     SUPPORTED_ENGINES["llama.cpp"] = LLAMA_CLASSES
     SUPPORTED_ENGINES["MLX"] = MLX_CLASSES
+    SUPPORTED_ENGINES["MindIE"] = MINDIE_CLASSES
 
     json_path = os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "llm_family.json"

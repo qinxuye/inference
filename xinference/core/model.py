@@ -145,6 +145,9 @@ class ModelActor(xo.StatelessActor):
                     f"Destroy scheduler actor failed, address: {self.address}, error: {e}"
                 )
 
+        if hasattr(self._model, "stop") and callable(self._model.stop):
+            self._model.stop()
+
         if (
             isinstance(self._model, (LLMPytorchModel, LLMVLLMModel))
             and self._model.model_spec.model_format == "pytorch"
@@ -173,6 +176,7 @@ class ModelActor(xo.StatelessActor):
         request_limits: Optional[int] = None,
     ):
         super().__init__()
+        from ..model.llm.mindie.core import MindIEModel
         from ..model.llm.pytorch.core import PytorchModel
         from ..model.llm.vllm.core import VLLMModel
 
@@ -187,7 +191,7 @@ class ModelActor(xo.StatelessActor):
         self._current_generator = lambda: None
         self._lock = (
             None
-            if isinstance(self._model, (PytorchModel, VLLMModel))
+            if isinstance(self._model, (PytorchModel, VLLMModel, MindIEModel))
             else asyncio.locks.Lock()
         )
         self._worker_ref = None
