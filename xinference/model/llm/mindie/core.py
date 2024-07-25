@@ -13,7 +13,9 @@
 # limitations under the License.
 
 import asyncio
+import json
 import logging
+import os.path
 import subprocess
 import time
 import uuid
@@ -33,6 +35,7 @@ from ....types import (
     CompletionChunk,
     LoRA,
 )
+from ...utils import create_symlink
 from ..core import LLM
 from ..llm_family import CustomLLMFamilyV1, LLMFamilyV1, LLMSpecV1
 from ..utils import ChatModelMixin
@@ -51,9 +54,19 @@ logger = logging.getLogger(__name__)
 
 MINDIE_SUPPORTED_MODELS: List[str] = []
 MINDIE_SUPPORTED_CHAT_MODELS: List[str] = [
+    "baichuan-chat",
+    "baichuan-2-chat",
+    "chatglm3",
+    "deepseek-chat",
+    "deepseek-coder-instruct",
     "llama-3-instruct",
+    "mistral-instruct-v0.3",
+    "telechat",
+    "Yi-chat",
+    "Yi-1.5-chat",
     "qwen-chat",
     "qwen1.5-chat",
+    "codeqwen1.5-chat",
     "qwen2-instruct",
 ]
 
@@ -77,6 +90,46 @@ class MindIEModel(LLM):
         self._client = None
         self._process: Optional[subprocess.Popen] = None
 
+    def _ensure_model_compatible(self) -> str:
+        model_path = self.model_path
+        mindie_path = "-".join([model_path, "mindie"])
+        mindie_config_path = os.path.join(mindie_path, "config.json")
+        if os.path.exists(mindie_path) and os.path.exists(mindie_config_path):
+            # the path is converted already, check if it can use
+            with open(os.path.join(mindie_path, "config.json")) as f:
+                params = json.load(f)
+                if params.get("torch_dtype") == "float16":
+                    return mindie_path
+
+        model_config_file = os.path.join(model_path, "config.json")
+        with open(model_config_file) as f:
+            params = json.load(f)
+            torch_dtype = params.get("torch_dtype")
+            assert torch_dtype in [
+                "float16",
+                "bfloat16",
+                None,
+            ], "torch_dtype can only be None, float16 or bfloat16"
+            if torch_dtype == "float16":
+                # MindIE can only support float16
+                return model_path
+
+            logger.info(
+                "Model path is not compatible with MindIE when torchdtype=%s",
+                torch_dtype,
+            )
+
+            os.makedirs(mindie_path, exist_ok=True)
+
+            create_symlink(model_path, mindie_path)
+            # delete config.json
+            os.remove(os.path.join(mindie_path, "config.json"))
+            # write new config.json
+            with open(os.path.join(mindie_path, "config.json"), "w") as cf:
+                params["torch_dtype"] = "float16"
+                json.dump(params, cf, indent=2)
+            return mindie_path
+
     def load(self):
         from .main import MindIEModelActor
 
@@ -98,6 +151,7 @@ class MindIEModel(LLM):
         ]
         logger.info("Launch MindIE with command, %s", commands)
         self._process = process = subprocess.Popen(commands)
+        model_path = self._ensure_model_compatible()
 
         async def try_connect():
             client: xo.ActorRefType[MindIEModelActor] = await xo.actor_ref(  # type: ignore
@@ -108,7 +162,7 @@ class MindIEModel(LLM):
                 model_family=self.model_family,
                 model_spec=self.model_spec,
                 quantization=self.quantization,
-                model_path=self.model_path,
+                model_path=model_path,
                 model_config=self._model_config,
             )
             await client.wait_ready()
