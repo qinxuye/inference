@@ -68,6 +68,7 @@ MINDIE_SUPPORTED_CHAT_MODELS: List[str] = [
     "qwen1.5-chat",
     "codeqwen1.5-chat",
     "qwen2-instruct",
+    "csg-wukong-chat-v0.1",
 ]
 
 
