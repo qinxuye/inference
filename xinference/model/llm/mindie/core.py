@@ -179,7 +179,7 @@ class MindIEModel(LLM):
                 try:
                     isolation.call(try_connect())
                 except (ConnectionError, xo.ActorNotExist) as e:
-                    logger.debug("Connect to MindIE process failed, %s", e)
+                    logger.debug("Connecting MindIE process (%s), will try again", e)
                     time.sleep(3)
                 except Exception as e:
                     try:
