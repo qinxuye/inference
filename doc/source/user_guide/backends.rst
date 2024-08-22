@@ -46,16 +46,14 @@ Currently, supported model includes:
 
 .. vllm_start
 
-- ``llama-2``, ``llama-3``, ``llama-2-chat``, ``llama-3-instruct``
-- ``baichuan``, ``baichuan-chat``, ``baichuan-2-chat``
-- ``internlm-16k``, ``internlm-chat-7b``, ``internlm-chat-8k``, ``internlm-chat-20b``
-- ``mistral-v0.1``, ``mistral-instruct-v0.1``, ``mistral-instruct-v0.2``, ``mistral-instruct-v0.3``
+- ``llama-2``, ``llama-3``, ``llama-3.1``, ``llama-2-chat``, ``llama-3-instruct``, ``llama-3.1-instruct``
+- ``mistral-v0.1``, ``mistral-instruct-v0.1``, ``mistral-instruct-v0.2``, ``mistral-instruct-v0.3``, ``mistral-nemo-instruct``, ``mistral-large-instruct``
 - ``codestral-v0.1``
 - ``Yi``, ``Yi-1.5``, ``Yi-chat``, ``Yi-1.5-chat``, ``Yi-1.5-chat-16k``
 - ``code-llama``, ``code-llama-python``, ``code-llama-instruct``
 - ``deepseek``, ``deepseek-coder``, ``deepseek-chat``, ``deepseek-coder-instruct``
 - ``codeqwen1.5``, ``codeqwen1.5-chat``
-- ``vicuna-v1.3``, ``vicuna-v1.5``
+- ``baichuan-2-chat``
 - ``internlm2-chat``
 - ``internlm2.5-chat``, ``internlm2.5-chat-1m``
 - ``qwen-chat``
@@ -65,7 +63,7 @@ Currently, supported model includes:
 - ``codegeex4``
 - ``qwen1.5-chat``, ``qwen1.5-moe-chat``
 - ``qwen2-instruct``, ``qwen2-moe-instruct``
-- ``gemma-it``
+- ``gemma-it``, ``gemma-2-it``
 - ``orion-chat``, ``orion-chat-rag``
 - ``c4ai-command-r-v01``
 .. vllm_end
@@ -75,5 +73,11 @@ SGLang
 `SGLang <https://github.com/sgl-project/sglang>`_ has a high-performance inference runtime with RadixAttention.
 It significantly accelerates the execution of complex LLM programs by automatic KV cache reuse across multiple calls.
 And it also supports other common techniques like continuous batching and tensor parallelism.
+
+MLX
+~~~
+`MLX <https://github.com/ml-explore/mlx-examples/tree/main/llms>`_ provides efficient runtime
+to run LLM on Apple silicon. It's recommended to use for Mac users when running on Apple silicon
+if the model has MLX format support.
 
 

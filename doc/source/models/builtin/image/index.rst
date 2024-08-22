@@ -11,6 +11,12 @@ The following is a list of built-in image models in Xinference:
    :maxdepth: 1
 
   
+   flux.1-dev
+  
+   flux.1-schnell
+  
+   kolors
+  
    sd-turbo
   
    sd3-medium
