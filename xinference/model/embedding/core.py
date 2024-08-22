@@ -423,7 +423,12 @@ def create_embedding_model_instance(
     if model_path is None:
         model_path = cache(model_spec)
 
-    model = EmbeddingModel(model_uid, model_path, model_spec, **kwargs)
+    from .mindie import is_available, MindIEEmbeddingModel
+
+    if is_available(model_spec):
+        model = MindIEEmbeddingModel(model_uid, model_path, model_spec, **kwargs)
+    else:
+        model = EmbeddingModel(model_uid, model_path, model_spec, **kwargs)
     model_description = EmbeddingModelDescription(
         subpool_addr, devices, model_spec, model_path=model_path
     )
