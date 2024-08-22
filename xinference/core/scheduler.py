@@ -24,7 +24,6 @@ import xoscar as xo
 
 logger = logging.getLogger(__name__)
 
-XINFERENCE_BATCHING_CLEAN_CACHE_INTERVAL = 5
 XINFERENCE_STREAMING_DONE_FLAG = "<XINFERENCE_STREAMING_DONE>"
 XINFERENCE_STREAMING_ERROR_FLAG = "<XINFERENCE_STREAMING_ERROR>"
 XINFERENCE_STREAMING_ABORT_FLAG = "<XINFERENCE_STREAMING_ABORT>"
@@ -81,7 +80,7 @@ class InferenceRequest:
         self.future_or_queue = future_or_queue
         # Record error message when this request has error.
         # Must set stopped=True when this field is set.
-        self.error_msg: Optional[str] = None
+        self.error_msg: Optional[str] = None  # type: ignore
         # For compatibility. Record some extra parameters for some special cases.
         self.extra_kwargs = {}
 
@@ -295,11 +294,11 @@ class SchedulerActor(xo.StatelessActor):
 
     def __init__(self):
         super().__init__()
-        self._waiting_queue: deque[InferenceRequest] = deque()
-        self._running_queue: deque[InferenceRequest] = deque()
+        self._waiting_queue: deque[InferenceRequest] = deque()  # type: ignore
+        self._running_queue: deque[InferenceRequest] = deque()  # type: ignore
         self._model = None
         self._id_to_req = {}
-        self._abort_req_ids: Set[str] = set()
+        self._abort_req_ids: Set[str] = set()  # type: ignore
         self._isolation = None
 
     async def __post_create__(self):
@@ -357,7 +356,7 @@ class SchedulerActor(xo.StatelessActor):
 
     @staticmethod
     def _empty_cache():
-        from ..model.llm.pytorch.utils import empty_cache
+        from ..model.llm.transformers.utils import empty_cache
 
         empty_cache()
 
