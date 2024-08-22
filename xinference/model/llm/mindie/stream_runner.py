@@ -22,7 +22,7 @@ from atb_llm.utils.log import logger, print_log
 from ....device_utils import empty_cache
 from ....types import max_tokens_field
 from ..llm_family import LLMFamilyV1, LLMSpecV1
-from ..pytorch.utils import get_context_length
+from ..transformers.utils import get_context_length
 from ..utils import ChatModelMixin
 from .config import MindIEModelConfig
 from .scheduler import InferenceRequest

@@ -22,7 +22,7 @@ from atb_llm.utils.log import logger, print_log
 
 from ....core.model import OutOfMemoryError
 from ....types import max_tokens_field
-from ..pytorch.utils import (
+from ..transformers.utils import (
     _get_completion,
     _get_completion_chunk,
     prepare_logits_processor,
