@@ -55,8 +55,10 @@ class F5TTSModel:
         from f5_tts.infer.utils_infer import load_model, load_vocoder
         from f5_tts.model import DiT
 
-        vocoder_name = self._kwargs.get("vocoder_name", "vocos")
-        vocoder_path = self._kwargs.get("vocoder_path")
+        load_kwargs = self._kwargs.copy()
+
+        vocoder_name = load_kwargs.pop("vocoder_name", "vocos")
+        vocoder_path = load_kwargs.pop("vocoder_path", None)
 
         if vocoder_name not in ["vocos", "bigvgan"]:
             raise Exception(f"Unsupported vocoder name: {vocoder_name}")
@@ -85,10 +87,12 @@ class F5TTSModel:
         )
         logger.info(f"Loading %s...", ckpt_file)
         self._model = load_model(
-            model_cls, model_cfg, ckpt_file, mel_spec_type=vocoder_name
+            model_cls, model_cfg, ckpt_file, mel_spec_type=vocoder_name, **load_kwargs
         )
 
-    def _infer(self, ref_audio, ref_text, text_gen, model_obj, mel_spec_type, speed):
+    def _infer(
+        self, ref_audio, ref_text, text_gen, model_obj, mel_spec_type, speed, **kwargs
+    ):
         import numpy as np
         from f5_tts.infer.utils_infer import infer_process, preprocess_ref_audio_text
 
@@ -140,6 +144,7 @@ class F5TTSModel:
                 self._vocoder,
                 mel_spec_type=mel_spec_type,
                 speed=speed,
+                **kwargs,
             )
             generated_audio_segments.append(audio)
 
@@ -189,6 +194,7 @@ class F5TTSModel:
             model_obj=self._model,
             mel_spec_type=vocoder_name,
             speed=speed,
+            **kwargs,
         )
 
         # Save the generated audio
