@@ -61,6 +61,7 @@ class VLLMModelConfig(TypedDict, total=False):
     tokenizer_mode: Optional[str]
     trust_remote_code: bool
     tensor_parallel_size: int
+    pipeline_parallel_size: int
     block_size: int
     swap_space: int  # GiB
     gpu_memory_utilization: float
@@ -321,9 +322,33 @@ class VLLMModel(LLM):
 
         cuda_count = self._get_cuda_count()
 
+        tensor_parallel_size = model_config.get("tensor_parallel_size")
+        pipeline_parallel_size = model_config.get("pipeline_parallel_size")
+        if tensor_parallel_size and pipeline_parallel_size:
+            if tensor_parallel_size * pipeline_parallel_size != cuda_count:
+                raise ValueError(
+                    f"tensor_parallel_size * pipeline_prallel_size "
+                    f"must be equal cuda count({cuda_count}), "
+                    f"got tensor_parallel_size: {tensor_parallel_size}, "
+                    f"pipeline_prallel_size: {pipeline_parallel_size}"
+                )
+        elif tensor_parallel_size:
+            if tensor_parallel_size != cuda_count:
+                raise ValueError(
+                    f"tensor_parallel_size must be equal cuda count, got {tensor_parallel_size}"
+                )
+        elif pipeline_parallel_size:
+            if pipeline_parallel_size != cuda_count:
+                raise ValueError(
+                    f"pipeline_parllel_size must be equal cuda count, got {pipeline_parallel_size}"
+                )
+        else:
+            # if not explicitly set tp or pp size
+            # set tp size to cuda count
+            model_config.setdefault("tensor_parallel_size", cuda_count)
+
         model_config.setdefault("tokenizer_mode", "auto")
         model_config.setdefault("trust_remote_code", True)
-        model_config.setdefault("tensor_parallel_size", cuda_count)
         model_config.setdefault("block_size", 16)
         model_config.setdefault("swap_space", 4)
         model_config.setdefault("gpu_memory_utilization", 0.90)
