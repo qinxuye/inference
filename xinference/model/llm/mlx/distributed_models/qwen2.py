@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from typing import Any, Optional
 
 import mlx.core as mx
@@ -21,7 +22,10 @@ from mlx_lm.models.qwen2 import Model as _Model
 from mlx_lm.models.qwen2 import ModelArgs
 from mlx_lm.models.qwen2 import Qwen2Model as _Qwen2Model
 
+from .....core.utils import log_sync
 from .core import DistributedModelMixin
+
+logger = logging.getLogger(__name__)
 
 
 class Qwen2Model(_Qwen2Model, DistributedModelMixin):
@@ -29,6 +33,7 @@ class Qwen2Model(_Qwen2Model, DistributedModelMixin):
         _Qwen2Model.__init__(self, *args, **kwargs)
         DistributedModelMixin.__init__(self)
 
+    @log_sync(logger)
     def __call__(
         self,
         x: mx.array,
@@ -60,7 +65,7 @@ class Qwen2Model(_Qwen2Model, DistributedModelMixin):
             self._send_stage_result(h)
             h = self._get_result()
         else:
-            self._set_result(h)
+            self._broadcast_result(h)
 
         return self.norm(h)
 

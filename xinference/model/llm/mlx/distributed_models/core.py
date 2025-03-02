@@ -13,40 +13,32 @@
 # limitations under the License.
 
 import asyncio
+import logging
 from typing import Dict, Optional
 
 import mlx.core as mx
 import xoscar as xo
+
+logger = logging.getLogger(__name__)
 
 
 class ReceiverActor(xo.StatelessActor):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        self._receiving_fut = asyncio.Future()
-        self._set_result_fut = asyncio.Future()
+        self._recv_queue = asyncio.Queue()
 
     @classmethod
     def gen_uid(cls, uid: str, rank: int):
         return f"Receiver-{uid}-{rank}"
 
-    def send(self, data: mx.array):
-        if self._receiving_fut.done():
-            # new iteration
-            self._receiving_fut = asyncio.Future()
-        self._receiving_fut.set_result(data)
+    async def send(self, data: mx.array):
+        # no need to use async function,
+        # but make it more convinient to patch this function for test purpose
+        self._recv_queue.put_nowait(data)
 
     async def recv(self):
-        return await self._receiving_fut
-
-    def set_result(self, result: mx.array):
-        if self._set_result_fut.done():
-            # new iteration
-            self._set_result_fut = asyncio.Future()
-        self._set_result_fut.set_result(result)
-
-    async def get_result(self):
-        return await self._set_result_fut
+        return await self._recv_queue.get()
 
 
 class DistributedModelMixin:
@@ -54,7 +46,7 @@ class DistributedModelMixin:
     world_size: int
     model_uid: Optional[str]
     address: Optional[str]
-    _receiver_ref: Optional[xo.ActorRef[ReceiverActor]]
+    _receiver_ref: Optional[xo.ActorRefType[ReceiverActor]]
     rank_to_addresses: Optional[Dict[int, str]]
 
     layers: list
@@ -76,43 +68,69 @@ class DistributedModelMixin:
             address=self.address,
         )
         self._receiver_ref = asyncio.run_coroutine_threadsafe(coro, self.loop).result()
+        logger.debug("Finish preparing distributed env")
 
     def _send_stage_result(self, result: mx.array):
         assert self.rank > 0
         assert self.rank_to_addresses is not None
         assert self.model_uid is not None
         last_rank = self.rank - 1
-        coro = xo.actor_ref(
-            uid=ReceiverActor.gen_uid(self.model_uid, last_rank),
-            address=self.rank_to_addresses[last_rank],
+        logger.debug(
+            "Start to send %s partial result to rank %d", self.model_uid, last_rank
         )
-        receiver_ref = asyncio.run_coroutine_threadsafe(coro, self.loop).result()
-        coro = receiver_ref.send(result)
-        asyncio.run_coroutine_threadsafe(coro, self.loop).result()
+
+        async def send():
+            receiver_ref = await xo.actor_ref(
+                uid=ReceiverActor.gen_uid(self.model_uid, last_rank),
+                address=self.rank_to_addresses[last_rank],
+            )
+            return await receiver_ref.send(result)
+
+        asyncio.run_coroutine_threadsafe(send(), self.loop).result()
+        logger.debug(
+            "Finish send %s partial result to rank %d, shape %s",
+            self.model_uid,
+            last_rank,
+            result.shape,
+        )
 
     def _wait_prev_stage_result(self):
+        logger.debug("Wait for partial result from prev shard %d", self.rank + 1)
         coro = self._receiver_ref.recv()
-        return asyncio.run_coroutine_threadsafe(coro, self.loop).result()
-
-    def _get_result(self):
-        coro = xo.actor_ref(
-            uid=ReceiverActor.gen_uid(self.model_uid, 0),
-            address=self.rank_to_addresses[0],
+        result = asyncio.run_coroutine_threadsafe(coro, self.loop).result()
+        logger.debug(
+            "Received partial result from prev shard %d, shape %s",
+            self.rank + 1,
+            result.shape,
         )
-        receiver_ref = asyncio.run_coroutine_threadsafe(coro, self.loop).result()
-        coro = receiver_ref.get_result()
-        return asyncio.run_coroutine_threadsafe(coro, self.loop).result()
+        return result
 
-    def _set_result(self, result: mx.array):
-        assert self.model_uid is not None
-        assert self.rank_to_addresses is not None
+    def _broadcast_result(self, result: mx.array):
+        logger.debug("broadcast result from driver")
+        coros = []
+
+        async def broadcast(rank: int):
+            receiver = await xo.actor_ref(
+                uid=ReceiverActor.gen_uid(self.model_uid, rank),
+                address=self.rank_to_addresses[rank],
+            )
+            await receiver.send(result)
+
+        async def broadcast_all():
+            coros = []
+            for rank in range(1, self.world_size):
+                coros.append(broadcast(rank))
+            await asyncio.gather(*coros)
+
+        return asyncio.run_coroutine_threadsafe(broadcast_all(), self.loop).result()
+
+    def _get_result(self) -> mx.array:
+        logger.debug("Get result from broadcasted data on self receiver")
         coro = xo.actor_ref(
-            uid=ReceiverActor.gen_uid(self.model_uid, 0),
-            address=self.rank_to_addresses[0],
+            uid=ReceiverActor.gen_uid(self.model_uid, self.rank), address=self.address
         )
-        receiver_ref = asyncio.run_coroutine_threadsafe(coro, self.loop).result()
-        coro = receiver_ref.set_result(result)
-        return asyncio.run_coroutine_threadsafe(coro, self.loop).result()
+        ref = asyncio.run_coroutine_threadsafe(coro, self.loop).result()
+        return asyncio.run_coroutine_threadsafe(ref.recv(), loop=self.loop).result()
 
     def pipeline(self):
         pipeline_size, rank = self.world_size, self.rank

@@ -885,7 +885,7 @@ class WorkerActor(xo.StatelessActor):
                     # add a few kwargs
                     model_kwargs.update(
                         dict(
-                            address=self.address,
+                            address=subpool_address,
                             n_worker=n_worker,
                             shard=shard,
                             driver_info=driver_info,

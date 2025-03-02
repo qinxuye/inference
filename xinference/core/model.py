@@ -154,10 +154,6 @@ def oom_check(fn):
 class ModelActor(xo.StatelessActor, CancelMixin):
     _replica_model_uid: Optional[str]
 
-    @classmethod
-    def gen_uid(cls, model: "LLM"):
-        return f"{model.__class__}-model-actor"
-
     async def __pre_destroy__(self):
         from ..model.embedding.core import EmbeddingModel
         from ..model.llm.sglang.core import SGLANGModel
@@ -185,7 +181,7 @@ class ModelActor(xo.StatelessActor, CancelMixin):
                 )
 
         if hasattr(self._model, "stop") and callable(self._model.stop):
-            self._model.stop()
+            await asyncio.to_thread(self._model.stop)
 
         if isinstance(self._model, LLMVLLMModel):
             if self._transfer_ref is not None:
@@ -282,6 +278,8 @@ class ModelActor(xo.StatelessActor, CancelMixin):
     async def __post_create__(self):
         self._loop = asyncio.get_running_loop()
 
+        logger.debug("Starting ModelActor at %s, uid: %s", self.address, self.uid)
+
         self._handle_pending_requests_task = asyncio.create_task(
             self._handle_pending_requests()
         )
@@ -306,6 +304,9 @@ class ModelActor(xo.StatelessActor, CancelMixin):
 
     def __repr__(self) -> str:
         return f"ModelActor({self._replica_model_uid})"
+
+    def __getattr__(self, attr: str):
+        return getattr(self._model, attr)
 
     def decrease_serve_count(self):
         self._serve_count -= 1
@@ -461,7 +462,9 @@ class ModelActor(xo.StatelessActor, CancelMixin):
         while True:
             i += 1
             try:
-                self._model.load()
+                if hasattr(self._model, "set_loop"):
+                    self._model.set_loop(asyncio.get_running_loop())
+                await asyncio.to_thread(self._model.load)
                 if hasattr(self._model, "driver_info"):
                     self._driver_info = self._model.driver_info
                 break
@@ -488,7 +491,7 @@ class ModelActor(xo.StatelessActor, CancelMixin):
 
     async def wait_for_load(self):
         if hasattr(self._model, "wait_for_load"):
-            self._model.wait_for_load()
+            await asyncio.to_thread(self._model.wait_for_load)
 
     def model_uid(self):
         return (
