@@ -397,6 +397,7 @@ class VLLMModel(LLM):
                 max_loras=max_loras,
                 **self._model_config,
             )
+            self._enable_v1_if_supported(engine_args)
 
             assert self._loop is not None
             self._worker_addresses = {}
@@ -469,6 +470,7 @@ class VLLMModel(LLM):
                 max_loras=max_loras,
                 **self._model_config,
             )
+            self._enable_v1_if_supported(engine_args)
             self._engine = AsyncLLMEngine.from_engine_args(engine_args)
 
         self._check_health_task = None
@@ -482,6 +484,46 @@ class VLLMModel(LLM):
             if self._loading_error:
                 _, err, tb = self._loading_error
                 raise err.with_traceback(tb)
+
+    def _enable_v1_if_supported(self, engine_args: "vllm.AsyncEngineArgs"):
+        from vllm import __version__ as vllm_version
+
+        if os.getenv("VLLM_USE_V1") is not None:
+            logger.debug(
+                "Setting vLLM v1 via environment variable already, skip checking"
+            )
+            return
+
+        try:
+            supported_func = engine_args._is_v1_supported_oracle
+        except AttributeError:
+            logger.debug(
+                "Cannot get `EngineArgs._is_v1_supported_oracle` "
+                "to decide enabling vLLM v1, perhaps vllm version is too old, "
+                "version: %s",
+                vllm_version,
+            )
+            return
+
+        model_config = engine_args.create_model_config()
+        old_main_thread = threading.main_thread()
+        try:
+            # HACK: patch main thread to let vllm pass check
+            # vllm do some signal handling when on main thread
+            # but they will skip registering signal if not on main thread,
+            # but the _is_v1_supported_oracle will return False
+            # when not on main thread, we patched the main thread temporially,
+            # It's OK because Xinference will take care of all processes
+            threading.main_thread = lambda: threading.current_thread()
+
+            if supported_func(model_config):
+                logger.debug("Setting vLLM v1 by checking model config")
+                os.environ["VLLM_USE_V1"] = "1"
+            else:
+                logger.debug("Use vLLM v0 due to not supported config")
+        finally:
+            # patch back
+            threading.main_thread = lambda: old_main_thread
 
     def stop(self):
         # though the vLLM engine will shutdown when deleted,
@@ -537,7 +579,6 @@ class VLLMModel(LLM):
         else:
             model_config.setdefault("quantization", None)
         model_config.setdefault("max_model_len", None)
-        model_config.setdefault("guided_decoding_backend", "outlines")
         model_config.setdefault("reasoning_content", False)
         # Add scheduling policy if vLLM version is 0.6.3 or higher
         if vllm.__version__ >= "0.6.3":
@@ -898,6 +939,16 @@ class VLLMModel(LLM):
             if is_match_tool_call:
                 assert chunk is not None
                 yield chunk
+
+            logger.info(
+                "Generate finished, request_id: %s, stop reason: %s, prompt tokens: %s, "
+                "completion tokens: %s, all tokens: %s",
+                request_id,
+                finish_reason,
+                prompt_tokens,
+                completion_tokens,
+                total_tokens,
+            )
 
             # match OpenAI API stream
             yield generate_completion_chunk(

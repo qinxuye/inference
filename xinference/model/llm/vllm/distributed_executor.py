@@ -54,13 +54,6 @@ class WorkerActor(xo.StatelessActor):
         return f"VllmWorker_{rank}"
 
     def execute_method(self, method: Union[str, Callable], *args, **kwargs):
-        logger.debug(
-            "Calling method %s in vllm worker %s, args: %s, kwargs: %s",
-            method,
-            self.uid,
-            args,
-            kwargs,
-        )
         if isinstance(method, str):
             return getattr(self._worker, method)(*args, **kwargs)
         else:
