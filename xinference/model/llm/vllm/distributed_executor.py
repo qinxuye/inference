@@ -54,6 +54,14 @@ class WorkerActor(xo.StatelessActor):
         return f"VllmWorker_{rank}"
 
     def execute_method(self, method: Union[str, Callable], *args, **kwargs):
+        # log this only for debug purpose
+        logger.debug(
+            "Calling method %s in vllm worker %s, args: %s, kwargs: %s",
+            method,
+            self.uid,
+            args,
+            kwargs,
+        )
         if isinstance(method, str):
             return getattr(self._worker, method)(*args, **kwargs)
         else:
@@ -84,7 +92,7 @@ class WorkerWrapper:
 class XinferenceDistributedExecutor(DistributedExecutorBase):
     """Xoscar based distributed executor"""
 
-    use_ray: bool = False
+    uses_ray: bool = False
     _loop: asyncio.AbstractEventLoop
     _pool_addresses: List[str]
     _n_worker: int

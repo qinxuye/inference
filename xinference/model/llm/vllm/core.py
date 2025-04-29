@@ -317,6 +317,7 @@ class VLLMModel(LLM):
     def load(self):
         try:
             import vllm
+            from vllm import envs
             from vllm.config import VllmConfig
             from vllm.engine.arg_utils import AsyncEngineArgs
             from vllm.engine.async_llm_engine import AsyncLLMEngine
@@ -388,7 +389,9 @@ class VLLMModel(LLM):
         elif self._n_worker > 1 or (
             self._device_count > 1 and vllm.__version__ >= "0.7.0"
         ):
-            from .distributed_executor import XinferenceDistributedExecutor
+            from .distributed_executor import (
+                XinferenceDistributedExecutor as _XinferenceDistributedExecutor,
+            )
 
             # model across multiple workers or GPUs
             engine_args = AsyncEngineArgs(
@@ -439,21 +442,46 @@ class VLLMModel(LLM):
                         assert worker_addresses
                         loop = self._loop
 
-                        class XinferenceAsyncLLMEngine(AsyncLLMEngine):
-                            @classmethod
-                            def _get_executor_cls(
-                                cls, engine_config: VllmConfig
-                            ) -> Type[ExecutorBase]:
-                                return partial(  # type: ignore
-                                    XinferenceDistributedExecutor,
-                                    pool_addresses=worker_addresses,
-                                    n_worker=self._n_worker,
-                                    loop=loop,
-                                )
+                        if not getattr(envs, "VLLM_USE_V1", False):
+                            # vLLM v0
+                            class XinferenceAsyncLLMEngine(AsyncLLMEngine):
+                                @classmethod
+                                def _get_executor_cls(
+                                    cls, engine_config: VllmConfig
+                                ) -> Type[ExecutorBase]:
+                                    return partial(  # type: ignore
+                                        _XinferenceDistributedExecutor,
+                                        pool_addresses=worker_addresses,
+                                        n_worker=self._n_worker,
+                                        loop=loop,
+                                    )
 
-                        self._engine = XinferenceAsyncLLMEngine.from_engine_args(
-                            engine_args
-                        )
+                            self._engine = XinferenceAsyncLLMEngine.from_engine_args(
+                                engine_args
+                            )
+                        else:
+                            # vLLM V1
+                            n_worker = self._n_worker
+
+                            class XinferenceDsitributedExecutor(
+                                _XinferenceDistributedExecutor
+                            ):
+                                def __init__(
+                                    self, vllm_config: VllmConfig, *args, **kwargs
+                                ):
+                                    super().__init__(
+                                        vllm_config,
+                                        worker_addresses,
+                                        n_worker,
+                                        loop,
+                                        *args,
+                                        **kwargs,
+                                    )
+
+                            engine_args.distributed_executor_backend = (
+                                XinferenceDsitributedExecutor
+                            )
+                            self._engine = AsyncLLMEngine.from_engine_args(engine_args)
                 except:
                     logger.exception("Creating vllm engine failed")
                     self._loading_error = sys.exc_info()
@@ -511,7 +539,7 @@ class VLLMModel(LLM):
             # HACK: patch main thread to let vllm pass check
             # vllm do some signal handling when on main thread
             # but they will skip registering signal if not on main thread,
-            # but the _is_v1_supported_oracle will return False
+            # however, the _is_v1_supported_oracle will return False
             # when not on main thread, we patched the main thread temporially,
             # It's OK because Xinference will take care of all processes
             threading.main_thread = lambda: threading.current_thread()
