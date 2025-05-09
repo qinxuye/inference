@@ -152,5 +152,29 @@
         "numpy==1.26.4"
       ]
     }
+  },
+  {
+    "model_name": "ltxv-2b-0.9.5",
+    "model_family": "LTX-Video",
+    "model_hub": "modelscope",
+    "model_id": "Lightricks/LTX-Video-0.9.5",
+    "model_revision": "master",
+    "model_ability": [
+      "text2video"
+    ],
+    "default_model_config": {
+      "torch_dtype": "bfloat16"
+    },
+    "default_generate_config": {
+    },
+    "virtualenv": {
+      "packages": [
+        "diffusers>=0.33.0",
+        "ftfy",
+        "imageio-ffmpeg",
+        "imageio",
+        "numpy==1.26.4"
+      ]
+    }
   }
 ]

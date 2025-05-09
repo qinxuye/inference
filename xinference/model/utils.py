@@ -20,7 +20,7 @@ import random
 import threading
 from json import JSONDecodeError
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Set, Tuple, Type, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Type, Union
 
 import huggingface_hub
 import numpy as np
@@ -261,7 +261,11 @@ def cache_from_uri(model_spec: CacheableModelSpec) -> str:
         raise ValueError(f"Unsupported URL scheme: {src_scheme}")
 
 
-def cache(model_spec: CacheableModelSpec, model_description_type: type):
+def cache(
+    model_spec: CacheableModelSpec,
+    model_description_type: type,
+    allow_patterns: Optional[Union[str, List[str]]] = None,
+):
     if (
         hasattr(model_spec, "model_uri")
         and getattr(model_spec, "model_uri", None) is not None
@@ -288,21 +292,26 @@ def cache(model_spec: CacheableModelSpec, model_description_type: type):
             None,
             model_spec.model_id,
             revision=model_spec.model_revision,
+            allow_patterns=allow_patterns,
         )
         create_symlink(download_dir, cache_dir)
     else:
         from huggingface_hub import snapshot_download as hf_download
 
-        use_symlinks = {}
+        download_options = {}
+        if allow_patterns:
+            download_options["allow_patterns"] = allow_patterns
         if not IS_NEW_HUGGINGFACE_HUB:
-            use_symlinks = {"local_dir_use_symlinks": True, "local_dir": cache_dir}
+            download_options.update(
+                {"local_dir_use_symlinks": True, "local_dir": cache_dir}  # type: ignore
+            )
         download_dir = retry_download(
             hf_download,
             model_spec.model_name,
             None,
             model_spec.model_id,
             revision=model_spec.model_revision,
-            **use_symlinks,
+            **download_options,
         )
         if IS_NEW_HUGGINGFACE_HUB:
             create_symlink(download_dir, cache_dir)

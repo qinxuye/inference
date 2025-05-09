@@ -145,5 +145,51 @@
         "numpy==1.26.4"
       ]
     }
+  },
+  {
+    "model_name": "ltxv-2b-0.9.5",
+    "model_family": "LTX-Video",
+    "model_id": "Lightricks/LTX-Video-0.9.5",
+    "model_revision": "e58e28c39631af4d1468ee57a853764e11c1d37e",
+    "model_ability": [
+      "text2video"
+    ],
+    "default_model_config": {
+      "torch_dtype": "bfloat16"
+    },
+    "default_generate_config": {
+    },
+    "virtualenv": {
+      "packages": [
+        "diffusers>=0.33.0",
+        "ftfy",
+        "imageio-ffmpeg",
+        "imageio",
+        "numpy==1.26.4"
+      ]
+    }
+  },
+  {
+    "model_name": "ltxv-13b-0.9.7",
+    "model_family": "LTX-Video",
+    "model_id": "a-r-r-o-w/LTX-Video-0.9.7-diffusers",
+    "model_revision": "a89a3501367cc1a42d211b684beffa8080349215",
+    "model_ability": [
+      "text2video"
+    ],
+    "default_model_config": {
+      "torch_dtype": "bfloat16"
+    },
+    "default_generate_config": {
+    },
+    "virtualenv": {
+      "packages": [
+        "diffusers>=0.33.0",
+        "ftfy",
+        "imageio-ffmpeg",
+        "imageio",
+        "numpy==1.26.4"
+      ]
+    }
   }
 ]

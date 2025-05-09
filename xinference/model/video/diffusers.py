@@ -133,6 +133,12 @@ class DiffUsersVideoModel:
                 pipeline = self._model = WanImageToVideoPipeline.from_pretrained(
                     self._model_path, vae=vae, image_encoder=image_encoder, **kwargs
                 )
+        elif self.model_spec.model_family == "LTX-Video":
+            from diffusers import LTXPipeline
+
+            pipeline = self._model = LTXPipeline.from_pretrained(
+                self._model_path, **kwargs
+            )
         else:
             raise Exception(
                 f"Unsupported model family: {self._model_spec.model_family}"

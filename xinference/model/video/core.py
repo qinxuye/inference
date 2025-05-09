@@ -11,10 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 import logging
 import os
 from collections import defaultdict
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 from ...constants import XINFERENCE_CACHE_DIR
 from ..core import CacheableModelSpec, ModelDescription, VirtualEnvSettings
@@ -40,6 +41,7 @@ class VideoModelFamilyV1(CacheableModelSpec):
     model_name: str
     model_id: str
     model_revision: str
+    model_file_allow_patterns: Optional[Union[str, List[str]]] = None
     model_hub: str = "huggingface"
     model_ability: Optional[List[str]]
     default_model_config: Optional[Dict[str, Any]]
@@ -131,7 +133,11 @@ def match_diffusion(
 def cache(model_spec: VideoModelFamilyV1):
     from ..utils import cache
 
-    return cache(model_spec, VideoModelDescription)
+    return cache(
+        model_spec,
+        VideoModelDescription,
+        allow_patterns=model_spec.model_file_allow_patterns,
+    )
 
 
 def get_cache_dir(model_spec: VideoModelFamilyV1):
