@@ -14,6 +14,7 @@
 
 import asyncio
 import logging
+import os
 import sys
 from functools import partial
 from typing import Type
@@ -83,12 +84,16 @@ async def test_distributed_executor(actor_pool_context):
         else:
             kwargs = {"pipeline_parallel_size": 2}
         engine_args = AsyncEngineArgs(
-            model=model_path, gpu_memory_utilization=0.8, enforce_eager=True, **kwargs
+            model=model_path,
+            max_model_len=1000,
+            gpu_memory_utilization=0.8,
+            enforce_eager=True,
+            **kwargs,
         )
         engine = AsyncLLMEngine.from_engine_args(engine_args)
         return engine
 
-    engine = await asyncio.to_thread(load, tp=True)
+    engine = await asyncio.to_thread(load, tp=False)
     for _ in range(2):
         # test 2 rounds
         outputs = []
@@ -100,3 +105,74 @@ async def test_distributed_executor(actor_pool_context):
         assert len(outputs) == 1
 
     await asyncio.to_thread(engine.engine.model_executor.shutdown)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Run for linux only")
+@pytest.mark.skipif(vllm is None, reason="vllm need to be installed")
+@pytest.mark.skipif(gpu_count() < 2, reason="At lease 2 gpus required to test")
+async def test_v1_distributed_executor(actor_pool_context):
+    from vllm.engine.arg_utils import AsyncEngineArgs
+    from vllm.sampling_params import SamplingParams
+    from vllm.v1.engine.async_llm import AsyncLLM
+    from vllm.v1.executor.abstract import Executor
+
+    from ..distributed_executor import XinferenceDistributedExecutorV1
+
+    try:
+        os.environ["VLLM_USE_V1"] = "1"
+
+        pool = actor_pool_context
+
+        worker_addr1 = await pool.append_sub_pool(env={"CUDA_VISIBLE_DEVICES": "0,1"})
+        worker_addr2 = await pool.append_sub_pool(env={"CUDA_VISIBLE_DEVICES": "0,1"})
+        loop = asyncio.get_running_loop()
+
+        executor_cls = partial(  # type: ignore
+            XinferenceDistributedExecutorV1,
+            pool_addresses=[worker_addr1, worker_addr2],
+            n_worker=1,
+        )
+        # patch vllm Executor.get_class
+        Executor.get_class = lambda vllm_config: executor_cls
+
+        llm_family = next(
+            f for f in BUILTIN_LLM_FAMILIES if f.model_name == "qwen2.5-instruct"
+        )
+        llm_family = llm_family.copy()
+        spec = next(
+            s
+            for s in llm_family.model_specs
+            if s.model_size_in_billions == 7 and s.model_format == "pytorch"
+        )
+        llm_family.model_specs = [spec]
+        model_path = CacheManager(llm_family).cache()
+
+        def load(tp: bool = True):
+            if tp:
+                kwargs = {"tensor_parallel_size": 2}
+            else:
+                kwargs = {"pipeline_parallel_size": 2}
+            engine_args = AsyncEngineArgs(
+                model=model_path,
+                max_model_len=1000,
+                gpu_memory_utilization=0.8,
+                enforce_eager=True,
+                **kwargs,
+            )
+            engine = AsyncLLM.from_engine_args(engine_args)
+            return engine
+
+        engine = await asyncio.to_thread(load, tp=True)
+        for i in range(2):
+            # test 2 rounds
+            outputs = []
+            async for output in engine.generate(
+                "Hi", SamplingParams(max_tokens=1), f"test_{i}", None
+            ):
+                outputs.append(output)
+
+            assert len(outputs) == 1
+
+        await asyncio.to_thread(engine.shutdown)
+    finally:
+        os.environ.pop("VLLM_USE_V1", None)
