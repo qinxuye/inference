@@ -125,7 +125,6 @@ async def test_v1_distributed_executor(actor_pool_context):
 
         worker_addr1 = await pool.append_sub_pool(env={"CUDA_VISIBLE_DEVICES": "0,1"})
         worker_addr2 = await pool.append_sub_pool(env={"CUDA_VISIBLE_DEVICES": "0,1"})
-        loop = asyncio.get_running_loop()
 
         executor_cls = partial(  # type: ignore
             XinferenceDistributedExecutorV1,
