@@ -15,6 +15,7 @@
 import asyncio
 import logging
 import os
+from concurrent.futures import Future
 from functools import partial
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
@@ -22,6 +23,7 @@ import xoscar as xo
 from vllm import envs
 from vllm.executor.executor_base import DistributedExecutorBase
 from vllm.utils import _run_task_with_lock, get_distributed_init_method
+from vllm.v1.outputs import ModelRunnerOutput
 from vllm.worker.worker_base import WorkerWrapperBase
 from xoscar.utils import get_next_port
 
@@ -341,6 +343,20 @@ class XinferenceDistributedExecutor(DistributedExecutorBase):
 
 if ExecutorV1:
 
+    class FutureWrapper(Future):
+        """A wrapper around a Ray output reference to meet the interface
+        of .execute_model().
+        """
+
+        def __init__(self, ref):
+            super().__init__()
+            self.ref = ref
+
+        def result(self, timeout=None):
+            if timeout is not None:
+                raise NotImplementedError("timeout is not supported")
+            return self.ref.get()
+
     class XinferenceDistributedExecutorV1(XinferenceDistributedExecutor, ExecutorV1):
         def __init__(
             self,
@@ -360,15 +376,29 @@ if ExecutorV1:
                 self, vllm_config, pool_addresses, n_worker, loop, *args, **kwargs
             )
 
+        @property
+        def max_concurrent_batches(self) -> int:
+            """Xinference distributed executor supports pipeline parallelism,
+            meaning that it allows PP size batches to be executed concurrently.
+            """
+            return self.parallel_config.pipeline_parallel_size
+
         def _create_workers(self, refs: xo.ActorRefType[WorkerActor]) -> None:
             self.workers = [WorkerWrapper(self._loop, ref) for ref in refs]
 
         def execute_model(
             self,
             execute_model_req: "ExecuteModelRequest",
-        ) -> List["SamplerOutput"]:
-            outputs = self._run_workers("execute_model", execute_model_req)
-            return outputs[0]
+        ) -> Union[ModelRunnerOutput, Future[ModelRunnerOutput]]:
+            refs = self._run_workers("execute_model", execute_model_req)
+
+            # When PP is not used, we block here until the result is available.
+            if self.max_concurrent_batches == 1:
+                return refs[0].get()
+
+            # When PP is used, we return a FutureWrapper immediately so that
+            # the scheduler can yield to the next batch.
+            return FutureWrapper(refs[0])
 
         def _run_workers(
             self,

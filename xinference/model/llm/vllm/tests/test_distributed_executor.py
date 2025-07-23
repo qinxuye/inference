@@ -93,7 +93,7 @@ async def test_distributed_executor(actor_pool_context):
         engine = AsyncLLMEngine.from_engine_args(engine_args)
         return engine
 
-    engine = await asyncio.to_thread(load, tp=False)
+    engine = await asyncio.to_thread(load, tp=True)
     for _ in range(2):
         # test 2 rounds
         outputs = []
@@ -161,7 +161,7 @@ async def test_v1_distributed_executor(actor_pool_context):
             engine = AsyncLLM.from_engine_args(engine_args)
             return engine
 
-        engine = await asyncio.to_thread(load, tp=True)
+        engine = await asyncio.to_thread(load, tp=False)
         for i in range(2):
             # test 2 rounds
             outputs = []
