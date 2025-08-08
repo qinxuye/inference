@@ -465,9 +465,11 @@ class DiffusionModel(SDAPIDiffusionModelMixin):
                 model.vae.enable_slicing()
 
     def _compile(self):
-        torch_compile: Union[str, bool] = self._kwargs.pop("compile", False)
+        torch_compile: Union[str, bool, list] = self._kwargs.pop("compile", False)
         if isinstance(torch_compile, str):
             components = torch_compile.split(",")
+        elif isinstance(torch_compile, list):
+            components = torch_compile
         elif torch_compile:
             components = ["transformer"]
         else:
