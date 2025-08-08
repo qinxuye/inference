@@ -465,10 +465,10 @@ class DiffusionModel(SDAPIDiffusionModelMixin):
                 model.vae.enable_slicing()
 
     def _compile(self):
-        compile: Union[str, bool] = self._kwargs.pop("compile", False)
-        if isinstance(compile, str):
-            components = compile.split(",")
-        elif compile:
+        torch_compile: Union[str, bool] = self._kwargs.pop("compile", False)
+        if isinstance(torch_compile, str):
+            components = torch_compile.split(",")
+        elif torch_compile:
             components = ["transformer"]
         else:
             components = None
@@ -476,6 +476,7 @@ class DiffusionModel(SDAPIDiffusionModelMixin):
         # apply compile
         if components:
             for component in components:
+                logger.debug("Enabling torch compile for %s", component)
                 getattr(self._model, component).compile(fullgraph=True)
 
     def get_max_num_images_for_batching(self):
