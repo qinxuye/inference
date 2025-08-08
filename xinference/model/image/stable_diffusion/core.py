@@ -266,6 +266,7 @@ class DiffusionModel(SDAPIDiffusionModelMixin):
                 raise
         self._load_to_device(self._model)
         self._apply_lora()
+        self._compile()
 
         if self._kwargs.get("deepcache", False):
             try:
@@ -462,6 +463,20 @@ class DiffusionModel(SDAPIDiffusionModelMixin):
                 model.enable_vae_slicing()
             except AttributeError:
                 model.vae.enable_slicing()
+
+    def _compile(self):
+        compile: Union[str, bool] = self._kwargs.pop("compile", False)
+        if isinstance(compile, str):
+            components = compile.split(",")
+        elif compile:
+            components = ["transformer"]
+        else:
+            components = None
+
+        # apply compile
+        if components:
+            for component in components:
+                getattr(self._model, component).compile(fullgraph=True)
 
     def get_max_num_images_for_batching(self):
         return self._kwargs.get("max_num_images", 16)
