@@ -31,3 +31,8 @@ gettext:
 # "make mode" option.  $(O) is meant as a shortcut for $(SPHINXOPTS).
 %: Makefile
 	@$(SPHINXBUILD) -M $@ "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
+
+# Build PDF via LaTeX
+latexpdf:
+	$(SPHINXBUILD) -b latex $(ALLSPHINXOPTS) -D language='zh_CN' "$(SOURCEDIR)" "$(BUILDDIR)/latex"
+	$(MAKE) -C $(BUILDDIR)/latex
