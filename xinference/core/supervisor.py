@@ -418,17 +418,24 @@ class SupervisorActor(xo.StatelessActor):
             specs = []
             # TODO: does not work when the supervisor and worker are running on separate nodes.
             _llm_family = llm_family.copy()
-            for spec in [
-                _spec
-                for _spec in llm_family.model_specs
-                if _spec.model_hub == "huggingface"
-            ]:
+            download_hubs = set()
+            for spec in llm_family.model_specs:
+                if (model_hub := spec.model_hub) != "huggingface":
+                    if model_hub in download_hubs:
+                        continue
+                    else:
+                        download_hubs.add(model_hub)
                 _llm_family.model_specs = [spec]
                 cache_manager = LLMCacheManager(_llm_family)
                 specs.append(
                     {**spec.dict(), "cache_status": cache_manager.get_cache_status()}
                 )
-            res = {**llm_family.dict(), "is_builtin": is_builtin, "model_specs": specs}
+            res = {
+                **llm_family.dict(),
+                "is_builtin": is_builtin,
+                "model_specs": specs,
+                "download_hubs": download_hubs,
+            }
         else:
             res = {**llm_family.dict(), "is_builtin": is_builtin}
         res["model_version_count"] = version_cnt
