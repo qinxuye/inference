@@ -98,44 +98,86 @@ mock_engine_libraries()
 # Mock platform checks BEFORE importing xinference modules
 def mock_platform_checks():
     """Mock platform and hardware checks for documentation generation"""
-    from unittest.mock import patch
-    import sys
-    import platform
-
-    # Mock platform system for MLX (make it appear as Apple Silicon)
-    sys.platform = "darwin"
-    platform.system = lambda: "Darwin"
-    platform.processor = lambda: "arm"
-
-    # Mock vLLM platform checks
-    import xinference.model.llm.vllm.core as vllm_core
-    vllm_core.VLLMModel._is_linux = lambda: True
-    vllm_core.VLLMModel._has_cuda_device = lambda: True
-    vllm_core.VLLMChatModel._is_linux = lambda: True
-    vllm_core.VLLMChatModel._has_cuda_device = lambda: True
-    vllm_core.VLLMMultiModel._is_linux = lambda: True
-    vllm_core.VLLMMultiModel._has_cuda_device = lambda: True
-
-    # Mock SGLang platform checks if available
+    # Import and mock engine checks without modifying system-wide platform settings
     try:
-        import xinference.model.llm.sglang.core as sglang_core
-        sglang_core.SGLANGModel._is_linux = lambda: True
-        sglang_core.SGLANGModel._has_cuda_device = lambda: True
-        sglang_core.SGLANGChatModel._is_linux = lambda: True
-        sglang_core.SGLANGChatModel._has_cuda_device = lambda: True
-        sglang_core.SGLANGVisionModel._is_linux = lambda: True
-        sglang_core.SGLANGVisionModel._has_cuda_device = lambda: True
-    except ImportError:
-        pass
+        # Mock vLLM platform checks
+        import xinference.model.llm.vllm.core as vllm_core
+        vllm_core.VLLMModel._is_linux = lambda: True
+        vllm_core.VLLMModel._has_cuda_device = lambda: True
+        vllm_core.VLLMChatModel._is_linux = lambda: True
+        vllm_core.VLLMChatModel._has_cuda_device = lambda: True
+        vllm_core.VLLMMultiModel._is_linux = lambda: True
+        vllm_core.VLLMMultiModel._has_cuda_device = lambda: True
 
-    # Mock LMDEPLOY platform checks if available
-    try:
-        import xinference.model.llm.lmdeploy.core as lmdeploy_core
-        lmdeploy_core.LMDeployModel._is_linux = lambda: True
-        lmdeploy_core.LMDeployModel._has_cuda_device = lambda: True
-        lmdeploy_core.LMDeployChatModel._is_linux = lambda: True
-        lmdeploy_core.LMDeployChatModel._has_cuda_device = lambda: True
-    except ImportError:
+        # Mock SGLang platform checks if available
+        try:
+            import xinference.model.llm.sglang.core as sglang_core
+            sglang_core.SGLANGModel._is_linux = lambda: True
+            sglang_core.SGLANGModel._has_cuda_device = lambda: True
+            sglang_core.SGLANGChatModel._is_linux = lambda: True
+            sglang_core.SGLANGChatModel._has_cuda_device = lambda: True
+            sglang_core.SGLANGVisionModel._is_linux = lambda: True
+            sglang_core.SGLANGVisionModel._has_cuda_device = lambda: True
+        except ImportError:
+            pass
+
+        # Mock LMDEPLOY platform checks if available
+        try:
+            import xinference.model.llm.lmdeploy.core as lmdeploy_core
+            lmdeploy_core.LMDeployModel._is_linux = lambda: True
+            lmdeploy_core.LMDeployModel._has_cuda_device = lambda: True
+            lmdeploy_core.LMDeployChatModel._is_linux = lambda: True
+            lmdeploy_core.LMDeployChatModel._has_cuda_device = lambda: True
+        except ImportError:
+            pass
+
+        # Mock MLX engine match methods directly to bypass platform checks
+        try:
+            import xinference.model.llm.mlx.core as mlx_core
+            # Override the match_json methods for all MLX model classes to bypass platform checks
+            # Store original methods
+            original_mlx_match = mlx_core.MLXModel.match_json
+            original_mlx_chat_match = mlx_core.MLXChatModel.match_json
+            original_mlx_vision_match = mlx_core.MLXVisionModel.match_json
+
+            def mocked_mlx_match(cls, llm_family, llm_spec, quantization):
+                """Mocked version that bypasses platform checks"""
+                if llm_spec.model_format not in ["mlx"]:
+                    return False, "MLX base engine only supports mlx format"
+                if "generate" not in llm_family.model_ability:
+                    return False, "MLX base engine requires generate ability"
+                if "chat" in llm_family.model_ability or "vision" in llm_family.model_ability:
+                    return False, "MLX base engine does not handle chat or vision models"
+                return True
+
+            def mocked_mlx_chat_match(cls, llm_family, llm_spec, quantization):
+                """Mocked version that bypasses platform checks"""
+                if llm_spec.model_format not in ["mlx"]:
+                    return False, "MLX chat engine only supports mlx format"
+                if "chat" not in llm_family.model_ability:
+                    return False, "MLX chat engine requires chat ability"
+                if "vision" in llm_family.model_ability:
+                    return False, "MLX chat engine does not support vision models"
+                return True
+
+            def mocked_mlx_vision_match(cls, llm_family, llm_spec, quantization):
+                """Mocked version that bypasses platform checks"""
+                if llm_spec.model_format not in ["mlx"]:
+                    return False, "MLX vision engine only supports mlx format"
+                if "vision" not in llm_family.model_ability:
+                    return False, "MLX vision engine requires vision ability"
+                return True
+
+            mlx_core.MLXModel.match_json = classmethod(mocked_mlx_match)
+            mlx_core.MLXChatModel.match_json = classmethod(mocked_mlx_chat_match)
+            mlx_core.MLXVisionModel.match_json = classmethod(mocked_mlx_vision_match)
+
+        except ImportError:
+            pass
+
+    except Exception as e:
+        # If any mocking fails, continue without it
+        print(f"Warning: Could not mock some engine platform checks: {e}")
         pass
 
 mock_platform_checks()
