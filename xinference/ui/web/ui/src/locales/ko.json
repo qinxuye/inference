@@ -259,6 +259,7 @@
     "memUsage": "메모리 사용률",
     "memTotal": "메모리 총계",
     "gpuCount": "GPU 수",
+    "gpuLoad": "GPU 로드",
     "gpuMemUsage": "GPU 메모리 사용률",
     "gpuMemTotal": "GPU 메모리 총계",
     "worker": "워커"

@@ -259,6 +259,7 @@
     "memUsage": "内存使用率",
     "memTotal": "内存总量",
     "gpuCount": "GPU 数量",
+    "gpuLoad": "GPU 负载",
     "gpuMemUsage": "GPU 内存使用率",
     "gpuMemTotal": "GPU 内存总量",
     "worker": "工作节点"

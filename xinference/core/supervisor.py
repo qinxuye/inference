@@ -307,6 +307,23 @@ class SupervisorActor(xo.StatelessActor):
     async def get_cluster_device_info(self, detailed: bool = False) -> List:
         import psutil
 
+        def _get_gpu_statuses(
+            status: Dict[str, Union[ResourceStatus, GPUStatus]],
+        ) -> List[GPUStatus]:
+            gpu_statuses: List[GPUStatus] = []
+            for value in status.values():
+                if isinstance(value, GPUStatus):
+                    gpu_statuses.append(value)
+            return gpu_statuses
+
+        def _get_average_gpu_utilization(
+            status: Dict[str, Union[ResourceStatus, GPUStatus]],
+        ) -> Optional[float]:
+            gpu_statuses = _get_gpu_statuses(status)
+            if not gpu_statuses:
+                return None
+            return sum(gpu.gpu_util for gpu in gpu_statuses) / len(gpu_statuses)
+
         supervisor_device_info = {
             "ip_address": self.address,
             "gpu_count": 0,
@@ -315,6 +332,7 @@ class SupervisorActor(xo.StatelessActor):
         if detailed:
             supervisor_device_info["gpu_vram_total"] = 0
             supervisor_device_info["gpu_vram_available"] = 0
+            supervisor_device_info["gpu_utilization"] = None
             supervisor_device_info["cpu_available"] = psutil.cpu_count() * (
                 1 - psutil.cpu_percent() / 100.0
             )
@@ -331,10 +349,11 @@ class SupervisorActor(xo.StatelessActor):
             total = (
                 vram_total if vram_total == 0 else f"{int(vram_total / 1024 / 1024)}MiB"
             )
+            gpu_statuses = _get_gpu_statuses(worker_status.status)
             info = {
                 "node_type": "Worker",
                 "ip_address": worker_addr,
-                "gpu_count": len(worker_status.status) - 1,
+                "gpu_count": len(gpu_statuses),
                 "gpu_vram_total": total,
             }
             if detailed:
@@ -345,6 +364,9 @@ class SupervisorActor(xo.StatelessActor):
                 info["mem_available"] = cpu_info.memory_available
                 info["mem_total"] = cpu_info.memory_total
                 info["gpu_vram_total"] = vram_total
+                info["gpu_utilization"] = _get_average_gpu_utilization(
+                    worker_status.status
+                )
                 info["gpu_vram_available"] = sum(
                     [v.mem_free for k, v in worker_status.status.items() if k != "cpu"]
                 )
@@ -1923,6 +1945,19 @@ class SupervisorActor(xo.StatelessActor):
         else:
             logger.warning(
                 f"Worker {worker_address} cannot be removed since it is not registered to supervisor."
+            )
+
+        self._worker_status.pop(worker_address, None)
+        try:
+            from .otel import get_cluster_metrics_collector
+
+            collector = get_cluster_metrics_collector()
+            if collector is not None:
+                collector.remove_worker(worker_address)
+        except Exception:
+            logger.exception(
+                "Failed to remove worker status from OTEL collector for worker_address=%s",
+                worker_address,
             )
 
     async def report_worker_status(
