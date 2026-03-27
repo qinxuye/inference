@@ -1,4 +1,4 @@
-FROM vllm/vllm-openai:v0.13.0
+FROM vllm/vllm-openai:v0.17.1
 
 COPY . /opt/inference
 WORKDIR /opt/inference
@@ -49,9 +49,9 @@ RUN pip install --upgrade -i "$PIP_INDEX" pip "setuptools<82" wheel && \
     pip install -i "$PIP_INDEX" wetext && \
     pip uninstall flashinfer -y && \
     pip install -i "$PIP_INDEX" flashinfer-python==0.5.3 flashinfer-cubin==0.5.3 && \
-    pip install https://github.com/flashinfer-ai/flashinfer/releases/download/v0.5.3/flashinfer_jit_cache-0.5.3+cu129-cp39-abi3-manylinux_2_28_x86_64.whl && \
     pip install -i "$PIP_INDEX" SQLAlchemy==1.4.54 && \
-    pip install https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.5.4/flash_attn-2.8.3+cu128torch2.9-cp312-cp312-linux_x86_64.whl && \
+    pip install https://github.com/flashinfer-ai/flashinfer/releases/download/v0.5.3/flashinfer_jit_cache-0.5.3+cu129-cp39-abi3-manylinux_2_28_x86_64.whl && \
+    pip install https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.7.12/flash_attn-2.8.3+cu128torch2.10-cp312-cp312-linux_x86_64.whl && \
     cd /opt/inference && \
     python3 setup.py build_web && \
     git restore . && \

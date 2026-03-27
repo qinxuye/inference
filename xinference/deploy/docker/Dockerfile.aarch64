@@ -1,0 +1,29 @@
+FROM vllm/vllm-openai:v0.17.1-aarch64
+
+COPY . /opt/inference
+
+WORKDIR /opt/inference
+
+ARG PIP_INDEX=https://pypi.org/simple
+
+RUN apt-get update -y && \
+    pip install --upgrade pip setuptools==79.0.1 wheel && \
+    apt-get install -y wget libpcre3 libpcre3-dev gcc rsync zlib1g zlib1g-dev git libssl-dev && \
+    apt-get clean all && \
+    cd /opt/inference/ && \
+    pip install --upgrade-strategy only-if-needed -r /opt/inference/xinference/deploy/docker/requirements_aarch64/requirements_aarch64.txt && \
+    pip install --no-deps --no-build-isolation "." && \
+    cd /opt/inference && \
+    python3 setup.py build_web && \
+    git restore . && \
+    pip install -i "$PIP_INDEX" --no-deps "." && \
+    pip install -i "$PIP_INDEX" "xllamacpp>=0.2.0" && \
+    pip cache purge
+
+RUN pip3 install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128 \
+    --no-deps && \
+    pip install triton && \
+    pip install torchcodec && \
+    pip cache purge
+
+ENTRYPOINT []
