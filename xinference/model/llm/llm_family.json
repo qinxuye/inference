@@ -22568,12 +22568,11 @@
         "#system_numpy#"
       ]
     },
-    "updated_at": 1769418585,
-    "featured": true,
+    "updated_at": 1775042312,
+    "featured": false,
     "architectures": [
       "Ernie4_5ForCausalLM"
-    ],
-    "model_type": "ernie4_5"
+    ]
   },
   {
     "version": 2,
