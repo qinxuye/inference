@@ -1416,6 +1416,52 @@ class WorkerActor(xo.StatelessActor):
         packages = merge_virtual_env_packages(base_packages, virtual_env_packages)
         packages = expand_engine_dependency_placeholders(packages, model_engine)
 
+        # Auto-configure PyTorch wheel URL based on system packages
+        # Check if packages contain PyTorch system markers (#system_torch#, etc.)
+        # If so, detect CUDA version from system and configure wheel URL
+        # Note: markers are kept as-is and resolved later by xoscar's process_packages
+        from .virtual_env_manager import PYTORCH_CUDA_WHEEL_URLS, PYTORCH_PACKAGES
+
+        system_cuda_urls = None
+        for pkg in packages:
+            if pkg.startswith("#system_") and pkg.endswith("#"):
+                # Extract package name from marker
+                marker_pkg = pkg[len("#system_") : -1].lower()
+                if marker_pkg in PYTORCH_PACKAGES:
+                    try:
+                        import importlib.metadata
+
+                        version = importlib.metadata.version(marker_pkg)
+                        # Extract CUDA version from version string (e.g., "2.5.0+cu121" -> "cu121")
+                        if "+" in version:
+                            _, suffix = version.split("+", 1)
+                            if suffix.startswith("cu") or suffix.startswith("rocm"):
+                                wheel_url = PYTORCH_CUDA_WHEEL_URLS.get(suffix)
+                                if wheel_url:
+                                    system_cuda_urls = [wheel_url]
+                                    logger.info(
+                                        f"Auto-configuring PyTorch wheel URL for CUDA {suffix}: {wheel_url}"
+                                    )
+                                    break
+                    except importlib.metadata.PackageNotFoundError:
+                        # Package not installed, skip - will be resolved during install
+                        pass
+
+        # Add PyTorch wheel URL if detected from system packages
+        if system_cuda_urls:
+            if settings.extra_index_url is None:
+                settings.extra_index_url = system_cuda_urls
+            else:
+                # Merge with existing extra_index_url, system URLs first for priority
+                existing_urls = (
+                    settings.extra_index_url
+                    if isinstance(settings.extra_index_url, list)
+                    else [settings.extra_index_url]
+                )
+                settings.extra_index_url = system_cuda_urls + [
+                    u for u in existing_urls if u not in system_cuda_urls
+                ]
+
         try:
             from xoscar.virtualenv.platform import get_cuda_version
 
