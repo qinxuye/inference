@@ -79,6 +79,8 @@ The following is a list of built-in audio models in Xinference:
   
    qwen3-tts-12hz-1.7b-base
   
+   qwen3-tts-12hz-1.7b-customvoice
+  
    seaco-paraformer-zh
   
    sensevoicesmall
