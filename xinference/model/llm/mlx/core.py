@@ -53,9 +53,11 @@ from ..core import LLM, chat_context_var
 from ..llm_family import LLMFamilyV2, LLMSpecV1
 from ..utils import (
     DEEPSEEK_TOOL_CALL_FAMILY,
+    GEMMA_TOOL_CALL_FAMILY,
     QWEN_TOOL_CALL_FAMILY,
     ChatModelMixin,
     generate_completion_chunk,
+    get_context_length_from_config,
 )
 
 logger = logging.getLogger(__name__)
@@ -404,6 +406,7 @@ class MLXModelConfig(TypedDict, total=False):
     max_gpu_memory: str
     trust_remote_code: bool
     reasoning_content: bool
+    enable_thinking: bool
     # distributed
     address: Optional[str]
     shard: Optional[int]
@@ -433,23 +436,6 @@ class PromptCache:
     cache: List[Any] = field(default_factory=list)
     model_key: Tuple[str, Optional[str]] = ("", None)
     tokens: List[int] = field(default_factory=list)
-
-
-def get_context_length(config: dict) -> int:
-    """Get the context length of a model from model config."""
-    if config.get("max_sequence_length") is not None:
-        max_sequence_length = config["max_sequence_length"]
-    else:
-        max_sequence_length = 2048
-    if config.get("seq_length") is not None:
-        seq_length = config["seq_length"]
-    else:
-        seq_length = 2048
-    if config.get("max_position_embeddings") is not None:
-        max_position_embeddings = config["max_position_embeddings"]
-    else:
-        max_position_embeddings = 2048
-    return max(max_sequence_length, seq_length, max_position_embeddings)
 
 
 class MLXModel(LLM, ChatModelMixin):
@@ -526,6 +512,7 @@ class MLXModel(LLM, ChatModelMixin):
         model_config.setdefault("revision", self.model_spec.model_revision)
         model_config.setdefault("trust_remote_code", True)
         model_config.setdefault("reasoning_content", False)
+        model_config.setdefault("enable_thinking", False)
         return model_config
 
     def _sanitize_generate_config(
@@ -750,7 +737,7 @@ class MLXModel(LLM, ChatModelMixin):
         # get context length
         config = load_config(Path(self.model_path))
         config.update(self._model_config)
-        self._context_length = get_context_length(config)
+        self._context_length = get_context_length_from_config(config)
 
         # Update allow_batch based on distributed inference
         # Only enable continuous batching for non-distributed inference (single worker)
@@ -1200,12 +1187,22 @@ class MLXChatModel(MLXModel, ChatModelMixin):
         if tools:
             if (
                 model_family in QWEN_TOOL_CALL_FAMILY
+                or model_family in GEMMA_TOOL_CALL_FAMILY
                 or model_family in DEEPSEEK_TOOL_CALL_FAMILY
             ):
                 full_context_kwargs["tools"] = tools
-        assert self.model_family.chat_template is not None
+        chat_template = self.model_family.chat_template
+        tokenizer = None
+        if not chat_template:
+            tokenizer = self._tokenizer
+            if tokenizer is not None:
+                chat_template = getattr(tokenizer, "chat_template", None)
+        if not chat_template:
+            raise ValueError(
+                f"chat_template is required for model {self.model_uid}, but none was provided."
+            )
         full_prompt = self.get_full_context(
-            messages, self.model_family.chat_template, **full_context_kwargs
+            messages, chat_template, tokenizer=tokenizer, **full_context_kwargs
         )
 
         generate_config = self._sanitize_generate_config(generate_config)
@@ -1217,9 +1214,35 @@ class MLXChatModel(MLXModel, ChatModelMixin):
             assert hasattr(
                 chunks, "__aiter__"
             ), "async_generate should return AsyncGenerator for streaming"
-            # Type narrowing: we know chunks is an AsyncGenerator when stream=True
+
+            async def _log_streaming_chunks():
+                full_text = ""
+                full_reasoning = ""
+                async for chunk in chunks:  # type: ignore[arg-type]
+                    choices = chunk.get("choices")
+                    if choices:
+                        first = choices[0]
+                        delta = first.get("delta")
+                        if isinstance(delta, dict):
+                            delta_reasoning = delta.get("reasoning_content")
+                            if isinstance(delta_reasoning, str):
+                                full_reasoning += delta_reasoning
+                            delta_text = delta.get("content")
+                            if delta_text:
+                                full_text += delta_text
+                        else:
+                            text = first.get("text")
+                            if isinstance(text, str):
+                                full_text += text
+                    yield chunk
+                logger.debug(
+                    "[MLX] Full accumulated output: reasoning=%r, content=%r",
+                    full_reasoning,
+                    full_text,
+                )
+
             return self._async_to_chat_completion_chunks(
-                chunks,  # type: ignore[arg-type]
+                _log_streaming_chunks(),
                 self.reasoning_parser,
                 chat_template_kwargs,
             )
@@ -1258,6 +1281,21 @@ class MLXVisionModel(MLXModel, ChatModelMixin):
             return False, "MLX vision engine requires vision ability"
         return True
 
+    def _sanitize_generate_config(
+        self,
+        generate_config: Optional[MLXGenerateConfig],
+    ) -> MLXGenerateConfig:
+        generate_config = super()._sanitize_generate_config(generate_config)
+        if (not generate_config.get("stop")) and self.model_family.stop:
+            generate_config["stop"] = self.model_family.stop.copy()
+        if (
+            generate_config.get("stop_token_ids", None) is None
+            and self.model_family.stop_token_ids
+        ):
+            generate_config["stop_token_ids"] = self.model_family.stop_token_ids.copy()
+
+        return generate_config
+
     def generate(
         self,
         prompt: Union[str, Dict[str, Any]],
@@ -1266,6 +1304,7 @@ class MLXVisionModel(MLXModel, ChatModelMixin):
     ) -> Union[Completion, Iterator[CompletionChunk]]:
         """Generate method for vision models (not using continuous batching)."""
         generate_config = self._sanitize_generate_config(generate_config)
+        logger.debug(f"[MLXVisionModel] generation params: {generate_config}")
 
         assert self._model is not None
         assert self._tokenizer is not None
@@ -1345,6 +1384,13 @@ class MLXVisionModel(MLXModel, ChatModelMixin):
                 "Distributed inference is not supported for vision models"
             )
 
+        reasoning_content = self._model_config.pop("reasoning_content")
+        enable_thinking = self._model_config.pop("enable_thinking", True)
+        self.prepare_parse_reasoning_content(
+            reasoning_content, enable_thinking=enable_thinking
+        )
+        self.prepare_parse_tool_calls()
+
         kwargs = {}
         kwargs["revision"] = self._model_config.get(
             "revision", self.model_spec.model_revision
@@ -1358,7 +1404,7 @@ class MLXVisionModel(MLXModel, ChatModelMixin):
         # get context length
         config = load_config(Path(self.model_path))
         config.update(self._model_config)
-        self._context_length = get_context_length(config)
+        self._context_length = get_context_length_from_config(config)
 
     def _generate_stream_inner(self, **kwargs):
         import mlx.core as mx
@@ -1503,11 +1549,26 @@ class MLXVisionModel(MLXModel, ChatModelMixin):
             )
             chat_context_var.set(chat_template_kwargs)
             full_context_kwargs = chat_template_kwargs.copy()
-            if tools and model_family in QWEN_TOOL_CALL_FAMILY:
+            if tools and (
+                model_family in QWEN_TOOL_CALL_FAMILY
+                or model_family in GEMMA_TOOL_CALL_FAMILY
+            ):
                 full_context_kwargs["tools"] = tools
-            assert self.model_family.chat_template is not None
+            chat_template = self.model_family.chat_template
+            tokenizer = None
+            if not chat_template:
+                tokenizer = self._tokenizer
+                if tokenizer is not None:
+                    chat_template = getattr(tokenizer, "chat_template", None)
+            if not chat_template:
+                raise ValueError(
+                    f"chat_template is required for model {self.model_uid}, but none was provided."
+                )
             prompt = self.get_full_context(
-                messages, self.model_family.chat_template, **full_context_kwargs
+                messages,
+                chat_template,
+                tokenizer=tokenizer,
+                **full_context_kwargs,
             )
             images, video_inputs = process_vision_info(messages)
             if video_inputs:
@@ -1535,7 +1596,36 @@ class MLXVisionModel(MLXModel, ChatModelMixin):
         if stream:
             it = self.generate(inputs, generate_config)
             assert isinstance(it, Iterator)
-            return self._to_chat_completion_chunks(it)
+
+            def _log_streaming_chunks():
+                full_text = ""
+                full_reasoning = ""
+                for chunk in it:
+                    choices = chunk.get("choices")
+                    if choices:
+                        first = choices[0]
+                        delta = first.get("delta")
+                        if isinstance(delta, dict):
+                            delta_reasoning = delta.get("reasoning_content")
+                            if isinstance(delta_reasoning, str):
+                                full_reasoning += delta_reasoning
+                            delta_text = delta.get("content")
+                            if isinstance(delta_text, str):
+                                full_text += delta_text
+                        elif first.get("text"):
+                            text = first["text"]
+                            if text:
+                                full_text += text  # type: ignore[arg-type]
+                    yield chunk
+                logger.debug(
+                    "[MLX] Full accumulated output: reasoning=%r, content=%r",
+                    full_reasoning,
+                    full_text,
+                )
+
+            return self._to_chat_completion_chunks(
+                _log_streaming_chunks(), self.reasoning_parser
+            )
         else:
             c = self.generate(inputs, generate_config)
             assert not isinstance(c, Iterator)
@@ -1543,4 +1633,4 @@ class MLXVisionModel(MLXModel, ChatModelMixin):
                 return self._post_process_completion(
                     self.model_family, self.model_uid, c
                 )
-            return self._to_chat_completion(c)
+            return self._to_chat_completion(c, self.reasoning_parser)
