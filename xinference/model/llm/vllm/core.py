@@ -160,18 +160,18 @@ except ImportError:
     VLLM_INSTALLED = False
     VLLM_VERSION = None
 
-DEFAULT_VLLM_VERSION = version.parse("0.13.0")
+DEFAULT_VLLM_VERSION = version.parse("0.19.0")
 
 
 def _get_effective_vllm_version() -> version.Version:
-    if VLLM_VERSION is not None:
-        return VLLM_VERSION
     try:
         from ....constants import XINFERENCE_ENABLE_VIRTUAL_ENV
     except Exception:
         XINFERENCE_ENABLE_VIRTUAL_ENV = False
     if XINFERENCE_ENABLE_VIRTUAL_ENV:
         return DEFAULT_VLLM_VERSION
+    elif VLLM_VERSION is not None:
+        return VLLM_VERSION
     return version.parse("0.0.0")
 
 
@@ -1201,11 +1201,7 @@ class VLLMModel(LLM):
             elif not enable_thinking and self.reasoning_parser:
                 enable_thinking = self.reasoning_parser.enable_thinking
 
-        if (
-            enable_thinking
-            and generate_config
-            and generate_config.get("skip_special_tokens") is None
-        ):
+        if (enable_thinking or tools) and generate_config:
             generate_config["skip_special_tokens"] = False
 
         sanitized_generate_config = self._sanitize_generate_config(generate_config)
@@ -2055,7 +2051,10 @@ class VLLMMultiModel(VLLMModel, ChatModelMixin):
 
         if stream:
             agen = await self.async_generate(
-                inputs, generate_config, request_id=request_id
+                inputs,
+                generate_config,
+                tools=True if tools else False,
+                request_id=request_id,
             )
             assert isinstance(agen, AsyncGenerator)
             if tools:
@@ -2065,7 +2064,10 @@ class VLLMMultiModel(VLLMModel, ChatModelMixin):
             )
         else:
             c = await self.async_generate(
-                inputs, generate_config, request_id=request_id
+                inputs,
+                generate_config,
+                tools=True if tools else False,
+                request_id=request_id,
             )
             assert not isinstance(c, AsyncGenerator)
             if tools:
