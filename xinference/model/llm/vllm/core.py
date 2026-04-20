@@ -837,7 +837,11 @@ class VLLMModel(LLM):
         if model_config is None:
             model_config = VLLMModelConfig()
 
-        model_config.setdefault("tokenizer_mode", "auto")
+        architectures = getattr(self.model_family, "architectures", []) or []
+        if "DeepseekV32ForCausalLM" in architectures:
+            model_config.setdefault("tokenizer_mode", "deepseek_v32")
+        else:
+            model_config.setdefault("tokenizer_mode", "auto")
         model_config.setdefault("trust_remote_code", True)
         model_config.setdefault("tensor_parallel_size", self._device_count)  # type: ignore
         model_config.setdefault("pipeline_parallel_size", self._n_worker)  # type: ignore
@@ -1683,7 +1687,7 @@ class VLLMChatModel(VLLMModel, ChatModelMixin):
         # Preprocess messages to ensure content is not None
         messages = self.prefill_messages(messages)
 
-        tools = generate_config.pop("tools", []) if generate_config else None
+        tools = list(generate_config.pop("tools", [])) if generate_config else None
         model_family = self.model_family.model_family or self.model_family.model_name
         chat_template_kwargs = (
             self._get_chat_template_kwargs_from_generate_config(
@@ -1713,7 +1717,7 @@ class VLLMChatModel(VLLMModel, ChatModelMixin):
                     lora_request = lora
                     break
         tokenizer = await self._get_tokenizer(lora_request)
-
+        logger.debug("tokenizer class: %s", type(tokenizer).__name__)
         full_prompt = self.get_full_context(
             messages,
             self.model_family.chat_template,
@@ -1961,7 +1965,7 @@ class VLLMMultiModel(VLLMModel, ChatModelMixin):
         generate_config: Optional[Dict] = None,
         request_id: Optional[str] = None,
     ) -> Union[ChatCompletion, AsyncGenerator[ChatCompletionChunk, None]]:
-        tools = generate_config.pop("tools", []) if generate_config else None
+        tools = list(generate_config.pop("tools", [])) if generate_config else None
 
         model_family = self.model_family.model_family or self.model_family.model_name
         audios, images, videos, video_kwargs = None, None, None, None
