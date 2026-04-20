@@ -38,7 +38,7 @@ RUN apt-get update -y && \
 RUN pip3 install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128 \
     --no-deps && \
     pip install triton && \
-    pip install torchcodec && \
+    pip install torchcodec==0.10.0 && \
     pip install "numpy==2.2.6" && \
     pip cache purge
 

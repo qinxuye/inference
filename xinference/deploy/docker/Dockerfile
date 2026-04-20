@@ -78,7 +78,7 @@ RUN /opt/conda/bin/conda create -n ffmpeg-env -c conda-forge 'ffmpeg<7' -y && \
 RUN pip3 install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128 \
     --no-deps && \
     pip install triton==3.4.0 && \
-    pip install torchcodec==0.9.0 && \
+    pip install torchcodec==0.10.0 && \
     pip cache purge
 
 # Override the default entrypoint of the vllm base image
