@@ -734,12 +734,32 @@ class SupervisorActor(xo.StatelessActor):
                 "gpu_vram_total": total,
             }
             if detailed:
-                cpu_info = worker_status.status["cpu"]
-                info["cpu_available"] = cpu_info.total * (1 - cpu_info.usage)
-                info["cpu_count"] = cpu_info.total
-                info["mem_used"] = cpu_info.memory_used
-                info["mem_available"] = cpu_info.memory_available
-                info["mem_total"] = cpu_info.memory_total
+                cpu_raw = worker_status.status.get("cpu")
+                if isinstance(cpu_raw, ResourceStatus):
+                    info["cpu_available"] = cpu_raw.total * (1 - cpu_raw.usage)
+                    info["cpu_count"] = cpu_raw.total
+                    info["mem_used"] = cpu_raw.memory_used
+                    info["mem_available"] = cpu_raw.memory_available
+                    info["mem_total"] = cpu_raw.memory_total
+                else:
+                    if cpu_raw is not None:
+                        logger.warning(
+                            "Worker %s status['cpu'] has unexpected type %s; "
+                            "omitting cpu/mem fields in cluster device info",
+                            worker_addr,
+                            type(cpu_raw).__name__,
+                        )
+                    else:
+                        logger.debug(
+                            "Worker %s status missing 'cpu' key; "
+                            "omitting cpu/mem fields in cluster device info",
+                            worker_addr,
+                        )
+                    info["cpu_available"] = None
+                    info["cpu_count"] = None
+                    info["mem_used"] = None
+                    info["mem_available"] = None
+                    info["mem_total"] = None
                 info["gpu_vram_total"] = vram_total
                 info["gpu_utilization"] = _get_average_gpu_utilization(
                     worker_status.status
