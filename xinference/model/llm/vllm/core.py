@@ -311,6 +311,7 @@ def _update_vllm_supported_lists() -> None:
         _append_unique(
             VLLM_SUPPORTED_MULTI_MODEL_LIST, "KimiK25ForConditionalGeneration"
         )
+        _append_unique(VLLM_SUPPORTED_CHAT_MODELS, "Glm4MoeLiteForCausalLM")
 
     if effective_version >= version.parse("0.16.0"):
         _append_unique(VLLM_SUPPORTED_CHAT_MODELS, "GlmMoeDsaForCausalLM")
