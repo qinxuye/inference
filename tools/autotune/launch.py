@@ -47,6 +47,18 @@ VLLM_GPU_MEMORY_UTILIZATION_CANDIDATES = [0.85, 0.90, 0.95]
 VLLM_MAX_NUM_SEQS_CANDIDATES = [32, 64, 128]
 VLLM_MAX_NUM_BATCHED_TOKENS_CANDIDATES = [4096, 8192, 16384]
 VLLM_BOOLEAN_CANDIDATES = [False, True]
+SUMMARY_METRIC_KEYS = [
+    "request_throughput",
+    "input_token_throughput",
+    "output_token_throughput",
+    "mean_ttft",
+    "p99_ttft",
+    "mean_tpot",
+    "p99_tpot",
+    "mean_latency",
+    "p99_latency",
+    "success_rate",
+]
 
 
 def import_optuna():
@@ -71,6 +83,19 @@ def parse_csv_floats(value: str) -> List[float]:
         return [float(item.strip()) for item in value.split(",") if item.strip()]
     except ValueError as exc:
         raise argparse.ArgumentTypeError(f"Invalid float list: {value}") from exc
+
+
+def parse_bool(value: str) -> bool:
+    lowered = value.strip().lower()
+    if lowered in {"1", "true", "yes", "y", "on"}:
+        return True
+    if lowered in {"0", "false", "no", "n", "off"}:
+        return False
+    raise argparse.ArgumentTypeError(f"Invalid boolean value: {value}")
+
+
+def parse_csv_bools(value: str) -> List[bool]:
+    return [parse_bool(item) for item in value.split(",") if item.strip()]
 
 
 def parse_key_value(value: str) -> Tuple[str, Any]:
@@ -108,6 +133,35 @@ def as_launch_model_size(value: Optional[str]) -> Optional[Any]:
         return value
 
 
+def unique_values(values: Sequence[Any]) -> List[Any]:
+    result = []
+    for value in values:
+        if value not in result:
+            result.append(value)
+    return result
+
+
+def build_vllm_search_space(args: argparse.Namespace) -> Dict[str, List[Any]]:
+    search_space: Dict[str, List[Any]] = {
+        "enable_chunked_prefill": unique_values(args.enable_chunked_prefill_candidates),
+        "gpu_memory_utilization": unique_values(args.gpu_memory_utilization_candidates),
+        "max_num_seqs": unique_values(args.max_num_seqs_candidates),
+        "max_num_batched_tokens": unique_values(args.max_num_batched_tokens_candidates),
+    }
+    if args.tune_prefix_caching:
+        search_space["enable_prefix_caching"] = list(VLLM_BOOLEAN_CANDIDATES)
+    if args.tune_enforce_eager:
+        search_space["enforce_eager"] = list(VLLM_BOOLEAN_CANDIDATES)
+    return search_space
+
+
+def search_space_size(search_space: Dict[str, List[Any]]) -> int:
+    size = 1
+    for candidates in search_space.values():
+        size *= len(candidates)
+    return size
+
+
 def build_base_launch_kwargs(args: argparse.Namespace) -> Dict[str, Any]:
     launch_kwargs: Dict[str, Any] = {
         "model_name": args.model_name,
@@ -141,19 +195,22 @@ def unique_model_uid(model_name: str, trial_number: int) -> str:
 
 def suggest_vllm_params(args: argparse.Namespace, trial: Any) -> Dict[str, Any]:
     enable_chunked_prefill = trial.suggest_categorical(
-        "enable_chunked_prefill", VLLM_BOOLEAN_CANDIDATES
+        "enable_chunked_prefill",
+        unique_values(args.enable_chunked_prefill_candidates),
     )
     max_num_seqs = trial.suggest_categorical(
-        "max_num_seqs", args.max_num_seqs_candidates
+        "max_num_seqs", unique_values(args.max_num_seqs_candidates)
     )
 
     params = {
         "gpu_memory_utilization": trial.suggest_categorical(
-            "gpu_memory_utilization", args.gpu_memory_utilization_candidates
+            "gpu_memory_utilization",
+            unique_values(args.gpu_memory_utilization_candidates),
         ),
         "max_num_seqs": max_num_seqs,
         "max_num_batched_tokens": trial.suggest_categorical(
-            "max_num_batched_tokens", args.max_num_batched_tokens_candidates
+            "max_num_batched_tokens",
+            unique_values(args.max_num_batched_tokens_candidates),
         ),
         "enable_chunked_prefill": enable_chunked_prefill,
     }
@@ -289,6 +346,23 @@ def write_json(path: Path, payload: Dict[str, Any]) -> None:
     tmp_path.replace(path)
 
 
+def record_trial_result(
+    trial: Any, result_dir: Path, trial_payload: Dict[str, Any]
+) -> None:
+    for key in (
+        "status",
+        "error",
+        "metrics",
+        "score",
+        "launch_kwargs",
+        "trial_params",
+        "model_uid",
+    ):
+        if key in trial_payload:
+            trial.set_user_attr(key, trial_payload[key])
+    append_jsonl(result_dir / "trials.jsonl", trial_payload)
+
+
 def run_trial(
     args: argparse.Namespace,
     client: RESTfulClient,
@@ -331,9 +405,9 @@ def run_trial(
             logger.info("Skipping invalid trial %s: %s", trial.number, invalid_reason)
             return FAILURE_SCORE
 
-        cleanup_model = True
         actual_model_uid = client.launch_model(wait_ready=True, **launch_kwargs)
         model_uid = actual_model_uid
+        cleanup_model = True
         trial_payload["model_uid"] = model_uid
 
         input_requests = sample_random_requests(
@@ -391,7 +465,7 @@ def run_trial(
                 logger.info(
                     "Failed to terminate trial model %s", model_uid, exc_info=True
                 )
-        append_jsonl(result_dir / "trials.jsonl", trial_payload)
+        record_trial_result(trial, result_dir, trial_payload)
 
 
 def best_trial_payload(study: Any) -> Dict[str, Any]:
@@ -404,6 +478,94 @@ def best_trial_payload(study: Any) -> Dict[str, Any]:
         "launch_kwargs": trial.user_attrs.get("launch_kwargs"),
         "model_uid": trial.user_attrs.get("model_uid"),
     }
+
+
+def trial_summary_payload(study: Any) -> List[Dict[str, Any]]:
+    summary = []
+    for trial in study.trials:
+        attrs = trial.user_attrs
+        metrics = attrs.get("metrics") or {}
+        row = {
+            "trial_number": trial.number,
+            "state": trial.state.name,
+            "status": attrs.get("status") or trial.state.name.lower(),
+            "score": trial.value,
+            "params": attrs.get("trial_params") or trial.params,
+            "error": attrs.get("error"),
+        }
+        for key in SUMMARY_METRIC_KEYS:
+            row[key] = metrics.get(key)
+        summary.append(row)
+    return summary
+
+
+def format_summary_value(value: Any, digits: int = 3) -> str:
+    if value is None:
+        return "-"
+    if isinstance(value, float):
+        return f"{value:.{digits}f}"
+    return str(value)
+
+
+def format_summary_error(value: Any, max_length: int = 96) -> str:
+    if not value:
+        return "-"
+    first_line = str(value).splitlines()[0]
+    if len(first_line) <= max_length:
+        return first_line
+    return first_line[: max_length - 3] + "..."
+
+
+def print_trial_summary(best: Dict[str, Any], trials: List[Dict[str, Any]]) -> None:
+    print("\nTrial summary:")
+    headers = [
+        "trial",
+        "status",
+        "score",
+        "req/s",
+        "out tok/s",
+        "in tok/s",
+        "p99 ttft",
+        "p99 tpot",
+        "p99 lat",
+        "success",
+        "error",
+        "params",
+    ]
+    rows = []
+    for trial in trials:
+        rows.append(
+            [
+                str(trial["trial_number"]),
+                str(trial["status"]),
+                format_summary_value(trial["score"]),
+                format_summary_value(trial["request_throughput"]),
+                format_summary_value(trial["output_token_throughput"]),
+                format_summary_value(trial["input_token_throughput"]),
+                format_summary_value(trial["p99_ttft"]),
+                format_summary_value(trial["p99_tpot"]),
+                format_summary_value(trial["p99_latency"]),
+                format_summary_value(trial["success_rate"]),
+                format_summary_error(trial["error"]),
+                json.dumps(trial["params"], sort_keys=True),
+            ]
+        )
+
+    widths = [
+        max(len(headers[index]), *(len(row[index]) for row in rows))
+        if rows
+        else len(headers[index])
+        for index in range(len(headers))
+    ]
+    print(
+        "  ".join(header.ljust(widths[index]) for index, header in enumerate(headers))
+    )
+    print("  ".join("-" * width for width in widths))
+    for row in rows:
+        print("  ".join(value.ljust(widths[index]) for index, value in enumerate(row)))
+
+    print("\nBest trial:")
+    print(json.dumps(best, ensure_ascii=False, indent=2, sort_keys=True))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -500,6 +662,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=parse_csv_ints,
         default=VLLM_MAX_NUM_BATCHED_TOKENS_CANDIDATES,
     )
+    parser.add_argument(
+        "--enable-chunked-prefill-candidates",
+        type=parse_csv_bools,
+        default=VLLM_BOOLEAN_CANDIDATES,
+        help="Comma-separated booleans for the enable_chunked_prefill search space.",
+    )
     prefix_caching_group = parser.add_mutually_exclusive_group()
     prefix_caching_group.add_argument(
         "--enable-prefix-caching",
@@ -558,6 +726,12 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--concurrency must be positive.")
     if args.model_engine != "vllm":
         raise ValueError("Only vLLM autotune is supported in this script.")
+    search_space = build_vllm_search_space(args)
+    empty_candidates = [
+        name for name, candidates in search_space.items() if len(candidates) == 0
+    ]
+    if empty_candidates:
+        raise ValueError(f"Search candidates cannot be empty: {empty_candidates}.")
 
 
 def main() -> None:
@@ -578,7 +752,23 @@ def main() -> None:
     result_dir.mkdir(parents=True, exist_ok=True)
     storage = args.storage or f"sqlite:///{result_dir / 'study.db'}"
 
-    sampler = optuna.samplers.TPESampler(seed=args.seed)
+    search_space = build_vllm_search_space(args)
+    total_candidates = search_space_size(search_space)
+    if args.max_model_len is None and False in search_space["enable_chunked_prefill"]:
+        logger.warning(
+            "enable_chunked_prefill=false is in the search space while "
+            "--max-model-len is not set. vLLM will use the model default "
+            "context length, which may require much larger "
+            "max_num_batched_tokens values."
+        )
+    if args.num_trials > total_candidates:
+        logger.info(
+            "Only %s unique candidate combinations are available; "
+            "stopping after the grid is exhausted even though --num-trials=%s.",
+            total_candidates,
+            args.num_trials,
+        )
+    sampler = optuna.samplers.GridSampler(search_space)
     study = optuna.create_study(
         study_name=args.study_name,
         direction="maximize",
@@ -595,6 +785,8 @@ def main() -> None:
         {
             "args": vars(args),
             "base_launch_kwargs": base_launch_kwargs,
+            "search_space": search_space,
+            "search_space_size": total_candidates,
             "storage": storage,
         },
     )
@@ -612,8 +804,10 @@ def main() -> None:
     )
 
     best = best_trial_payload(study)
+    trials = trial_summary_payload(study)
     write_json(result_dir / "best.json", best)
-    print(json.dumps(best, ensure_ascii=False, indent=2, sort_keys=True))
+    write_json(result_dir / "summary.json", {"best": best, "trials": trials})
+    print_trial_summary(best, trials)
 
 
 if __name__ == "__main__":

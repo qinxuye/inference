@@ -66,7 +66,9 @@ python tools/autotune/launch.py \
 
 ## What Gets Tuned
 
-The vLLM search space is fixed in the script. By default it tunes:
+The vLLM search space is fixed in the script and enumerated as a discrete grid.
+Each candidate combination is tried at most once in a study. By default it
+tunes:
 
 - `gpu_memory_utilization`: `0.85,0.90,0.95`
 - `max_num_seqs`: `32,64,128`
@@ -82,11 +84,18 @@ python tools/autotune/launch.py \
   --tokenizer Qwen/Qwen2.5-7B-Instruct \
   --gpu-memory-utilization-candidates 0.9,0.95 \
   --max-num-seqs-candidates 32,64 \
-  --max-num-batched-tokens-candidates 8192,16384
+  --max-num-batched-tokens-candidates 8192,16384 \
+  --enable-chunked-prefill-candidates true
 ```
 
 `max_model_len` is not tuned. If you pass `--max-model-len`, the value is treated
 as a fixed context length and forwarded to launch.
+
+If `--max-model-len` is not set, vLLM uses the model's default context length.
+For long-context models, `enable_chunked_prefill=false` may require
+`max_num_batched_tokens` to be at least that context length. Use
+`--enable-chunked-prefill-candidates true` when that combination is not worth
+testing.
 
 `enable_prefix_caching` and `enforce_eager` are not changed by default. Use
 `--enable-prefix-caching`, `--disable-prefix-caching`, `--enforce-eager`, or
@@ -115,6 +124,10 @@ Important workload flags:
 Keep `--num-prompts` small while exploring the search space. Increase it for the
 final confirmation run after the candidate space has been narrowed.
 
+`--num-trials` limits how many unique candidate combinations are evaluated. If
+`--num-trials` is larger than the grid size, the run stops after all
+combinations have been tried.
+
 ## Objective
 
 The default objective is `balanced`, which rewards output token throughput,
@@ -141,6 +154,12 @@ The directory contains:
   and errors.
 - `study.db`: default Optuna SQLite storage.
 - `best.json`: best trial score, params, metrics, and full launch kwargs.
+- `summary.json`: best trial plus a compact per-trial summary with throughput,
+  latency, success rate, status, score, and params.
+
+The command also prints a compact trial summary table before printing the best
+trial JSON, so failed trials and per-trial throughput are visible without
+manually parsing `trials.jsonl`.
 
 Use `--study-name` to choose a stable output directory, and `--resume` to resume
 an existing study:
