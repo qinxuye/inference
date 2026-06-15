@@ -46,6 +46,7 @@ FAILURE_SCORE = -1e12
 VLLM_GPU_MEMORY_UTILIZATION_CANDIDATES = [0.85, 0.90, 0.95]
 VLLM_MAX_NUM_SEQS_CANDIDATES = [32, 64, 128]
 VLLM_MAX_NUM_BATCHED_TOKENS_CANDIDATES = [4096, 8192, 16384]
+VLLM_BLOCK_SIZE_CANDIDATES = [16, 32]
 VLLM_BOOLEAN_CANDIDATES = [False, True]
 SUMMARY_METRIC_KEYS = [
     "request_throughput",
@@ -147,6 +148,7 @@ def build_vllm_search_space(args: argparse.Namespace) -> Dict[str, List[Any]]:
         "gpu_memory_utilization": unique_values(args.gpu_memory_utilization_candidates),
         "max_num_seqs": unique_values(args.max_num_seqs_candidates),
         "max_num_batched_tokens": unique_values(args.max_num_batched_tokens_candidates),
+        "block_size": unique_values(args.block_size_candidates),
     }
     if args.tune_prefix_caching:
         search_space["enable_prefix_caching"] = list(VLLM_BOOLEAN_CANDIDATES)
@@ -211,6 +213,10 @@ def suggest_vllm_params(args: argparse.Namespace, trial: Any) -> Dict[str, Any]:
         "max_num_batched_tokens": trial.suggest_categorical(
             "max_num_batched_tokens",
             unique_values(args.max_num_batched_tokens_candidates),
+        ),
+        "block_size": trial.suggest_categorical(
+            "block_size",
+            unique_values(args.block_size_candidates),
         ),
         "enable_chunked_prefill": enable_chunked_prefill,
     }
@@ -663,6 +669,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=VLLM_MAX_NUM_BATCHED_TOKENS_CANDIDATES,
     )
     parser.add_argument(
+        "--block-size-candidates",
+        type=parse_csv_ints,
+        default=VLLM_BLOCK_SIZE_CANDIDATES,
+        help="Comma-separated block_size values for the vLLM KV cache block size.",
+    )
+    parser.add_argument(
         "--enable-chunked-prefill-candidates",
         type=parse_csv_bools,
         default=VLLM_BOOLEAN_CANDIDATES,
@@ -732,6 +744,20 @@ def validate_args(args: argparse.Namespace) -> None:
     ]
     if empty_candidates:
         raise ValueError(f"Search candidates cannot be empty: {empty_candidates}.")
+    for name in ("max_num_seqs", "max_num_batched_tokens", "block_size"):
+        invalid_values = [value for value in search_space[name] if int(value) <= 0]
+        if invalid_values:
+            raise ValueError(f"{name} candidates must be positive: {invalid_values}.")
+    invalid_gpu_utilization = [
+        value
+        for value in search_space["gpu_memory_utilization"]
+        if not (0.0 < float(value) <= 1.0)
+    ]
+    if invalid_gpu_utilization:
+        raise ValueError(
+            "gpu_memory_utilization candidates must be in (0, 1]: "
+            f"{invalid_gpu_utilization}."
+        )
 
 
 def main() -> None:

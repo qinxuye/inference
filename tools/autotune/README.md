@@ -73,6 +73,7 @@ tunes:
 - `gpu_memory_utilization`: `0.85,0.90,0.95`
 - `max_num_seqs`: `32,64,128`
 - `max_num_batched_tokens`: `4096,8192,16384`
+- `block_size`: `16,32`
 - `enable_chunked_prefill`: `false,true`
 
 The candidate lists can be narrowed from the command line:
@@ -85,11 +86,17 @@ python tools/autotune/launch.py \
   --gpu-memory-utilization-candidates 0.9,0.95 \
   --max-num-seqs-candidates 32,64 \
   --max-num-batched-tokens-candidates 8192,16384 \
+  --block-size-candidates 16 \
   --enable-chunked-prefill-candidates true
 ```
 
 `max_model_len` is not tuned. If you pass `--max-model-len`, the value is treated
 as a fixed context length and forwarded to launch.
+
+`block_size` controls the vLLM KV cache block size. Xinference defaults to `16`.
+On CUDA, vLLM also commonly supports `32`, so the autotune default tries both.
+Fix it with `--block-size-candidates 16` when you want to keep the search space
+small.
 
 If `--max-model-len` is not set, vLLM uses the model's default context length.
 For long-context models, `enable_chunked_prefill=false` may require
