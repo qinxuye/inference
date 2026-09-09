@@ -67,6 +67,7 @@ from ..utils import (
     GEMMA_TOOL_CALL_FAMILY,
     GLM5_TOOL_CALL_FAMILY,
     KIMI_K3_TOOL_CALL_FAMILY,
+    MINICPM5_TOOL_CALL_FAMILY,
     QWEN_TOOL_CALL_FAMILY,
     QWEN_TOOL_CALL_SYMBOLS,
     ChatModelMixin,
@@ -2286,6 +2287,7 @@ class VLLMChatModel(VLLMModel, ChatModelMixin):
                 or model_family in DEEPSEEK_TOOL_CALL_FAMILY
                 or model_family in GLM5_TOOL_CALL_FAMILY
                 or model_family in KIMI_K3_TOOL_CALL_FAMILY
+                or model_family in MINICPM5_TOOL_CALL_FAMILY
             ):
                 full_context_kwargs["tools"] = tools
         assert self.model_family.chat_template is not None
@@ -2667,6 +2669,7 @@ class VLLMMultiModel(VLLMModel, ChatModelMixin):
                     or model_family in GEMMA_TOOL_CALL_FAMILY
                     or model_family in GLM5_TOOL_CALL_FAMILY
                     or model_family in KIMI_K3_TOOL_CALL_FAMILY
+                    or model_family in MINICPM5_TOOL_CALL_FAMILY
                 ):
                     full_context_kwargs["tools"] = tools
                 assert self.model_family.chat_template is not None
