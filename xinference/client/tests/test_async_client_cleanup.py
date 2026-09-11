@@ -15,7 +15,6 @@
 import asyncio
 import gc
 import threading
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -26,16 +25,11 @@ from ..restful import async_restful_client as client_module
     "client_class",
     [client_module.AsyncRESTfulModelHandle, client_module.AsyncClient],
 )
-def test_destructor_does_not_require_an_event_loop(client_class, monkeypatch):
+def test_destructor_without_initialized_owner_loop(client_class, monkeypatch):
     def fail_get_event_loop():
         raise AssertionError("destructor must not request an implicit event loop")
 
     monkeypatch.setattr(client_module.asyncio, "get_event_loop", fail_get_event_loop)
-    monkeypatch.setattr(
-        client_module.asyncio,
-        "get_running_loop",
-        MagicMock(side_effect=RuntimeError("no running event loop")),
-    )
     client = client_class.__new__(client_class)
     client.session = object()
 
