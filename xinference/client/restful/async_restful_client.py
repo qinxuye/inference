@@ -70,6 +70,17 @@ async def _release_response(response: aiohttp.ClientResponse):
     await response.wait_for_close()
 
 
+def _schedule_session_close(client: Any) -> None:
+    if not getattr(client, "session", None):
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # Async cleanup cannot run after the owning event loop has stopped.
+        return
+    loop.create_task(client.close())
+
+
 class AsyncRESTfulModelHandle:
     """
     A sync model interface (for RESTful client) which provides type hints that makes it much easier to use xinference
@@ -92,9 +103,7 @@ class AsyncRESTfulModelHandle:
             self.session = None
 
     def __del__(self):
-        if self.session:
-            loop = asyncio.get_event_loop()
-            loop.create_task(self.close())
+        _schedule_session_close(self)
 
 
 class AsyncRESTfulEmbeddingModelHandle(AsyncRESTfulModelHandle):
@@ -1291,9 +1300,7 @@ class AsyncClient:
             self.session = None
 
     def __del__(self):
-        if self.session:
-            loop = asyncio.get_event_loop()
-            loop.create_task(self.close())
+        _schedule_session_close(self)
 
     def _set_token(self, token: Optional[str]):
         if not self._cluster_authed or token is None:
