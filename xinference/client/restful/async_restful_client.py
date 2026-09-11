@@ -73,12 +73,20 @@ async def _release_response(response: aiohttp.ClientResponse):
 def _schedule_session_close(client: Any) -> None:
     if not getattr(client, "session", None):
         return
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        # Async cleanup cannot run after the owning event loop has stopped.
+    loop = getattr(client, "_session_loop", None)
+    if loop is None or loop.is_closed():
         return
-    loop.create_task(client.close())
+
+    def close_on_owner_loop():
+        loop.create_task(client.close())
+
+    try:
+        # Also queues cleanup while a manually driven loop is paused, and when
+        # the last reference is released by another thread.
+        loop.call_soon_threadsafe(close_on_owner_loop)
+    except RuntimeError:
+        # The owning loop may have closed since the check above.
+        pass
 
 
 class AsyncRESTfulModelHandle:
@@ -92,6 +100,7 @@ class AsyncRESTfulModelHandle:
         self._base_url = base_url
         self.auth_headers = auth_headers
         self.timeout = aiohttp.ClientTimeout(total=1800)
+        self._session_loop = asyncio.get_running_loop()
         self.session = aiohttp.ClientSession(
             connector=aiohttp.TCPConnector(force_close=True)
         )
@@ -1286,6 +1295,7 @@ class AsyncClient:
         self._headers: Dict[str, str] = {}
         self._cluster_authed = False
         self.timeout = aiohttp.ClientTimeout(total=1800)
+        self._session_loop = asyncio.get_running_loop()
         self.session = aiohttp.ClientSession(
             connector=aiohttp.TCPConnector(force_close=True), timeout=self.timeout
         )
