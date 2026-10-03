@@ -168,6 +168,8 @@ class GPUTransfer:
                     last_reused_keys = None
                     continue
                 for layer, (block_keys, ids) in layers.items():
+                    # Unpublished layers may still be copying in another stage;
+                    # only published data can skip the gather and its fence.
                     if all(
                         key in self.store.ready
                         and layer in self.store.blocks.get(key, {})
