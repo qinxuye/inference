@@ -123,6 +123,10 @@ class XavierConnector(KVConnectorBase_V1, SupportsHMA):
         self._rank = int(self._xavier_config.get("rank", 0))
         self._is_producer = self._kv_transfer_config.is_kv_producer
         self._is_consumer = self._kv_transfer_config.is_kv_consumer
+        self._history_enabled = self._direct_test and bool(self._gpu_budget)
+        if self._history_enabled and self._is_producer:
+            # P may restore its own independent history before computing a suffix.
+            self._is_consumer = True
         self._requests_need_load: Dict[str, XavierLoadRequest] = {}
         self._pending_store_requests: Dict[str, XavierStoreRequest] = {}
         self._leased_requests: Dict[str, XavierLoadRequest] = {}
@@ -281,6 +285,43 @@ class XavierConnector(KVConnectorBase_V1, SupportsHMA):
         if self._direct_test:
             params = getattr(request, "kv_transfer_params", None) or {}
             handoff = params.get("xavier_direct")
+            if self._is_producer and getattr(self, "_history_enabled", False):
+                previous = self._requests_need_load.get(request.request_id)
+                if previous is not None:
+                    if previous.local_transfers_by_group:
+                        raise RuntimeError("History load already allocated")
+                    self._requests_need_load.pop(request.request_id)
+                    self._call(self._release_history_request(previous.lease))
+                tokens = max(len(request.prompt_token_ids) - 1, 0)
+                # A local prefix hit can leave only a partial final block.
+                # Restoring that tiny tail costs more actor/layer work than
+                # computing it. Keep the local-cache fast path free of RPCs.
+                if tokens - num_computed_tokens < self._block_size:
+                    return 0, False
+                start = num_computed_tokens // self._block_size
+                hashes = self._build_xavier_hashes(request.prompt_token_ids[:tokens])[
+                    start:
+                ]
+                lease = "history:" + uuid.uuid4().hex
+
+                async def reserve():
+                    ref = await self._get_transfer_ref()
+                    return await ref.reserve_direct_history_v1(
+                        lease, [key for key, _ in hashes]
+                    )
+
+                matched = self._call(reserve())
+                if not matched:
+                    return 0, False
+                self._requests_need_load[request.request_id] = XavierLoadRequest(
+                    request.request_id,
+                    {self._rank: {key: start + i for i, key in enumerate(matched)}},
+                    lease=lease,
+                )
+                return (
+                    min(len(matched) * self._block_size, tokens - num_computed_tokens),
+                    True,
+                )
             if not self._is_consumer:
                 return 0, False
             if handoff is None:
@@ -407,6 +448,14 @@ class XavierConnector(KVConnectorBase_V1, SupportsHMA):
         block_ids: List[int],
     ) -> tuple[bool, dict[str, Any] | None]:
         if self._direct_test:
+            pending = self._requests_need_load.get(request.request_id)
+            if pending is not None and pending.lease.startswith("history:"):
+                if not pending.local_transfers_by_group:
+                    self._requests_need_load.pop(request.request_id)
+                    self._call(self._release_history_request(pending.lease))
+                else:
+                    # Allocated async loads must still drain after an abort.
+                    return False, None
             params = getattr(request, "kv_transfer_params", None) or {}
             if self._is_producer and params.get("do_remote_decode"):
                 from vllm.v1.request import RequestStatus
@@ -424,9 +473,21 @@ class XavierConnector(KVConnectorBase_V1, SupportsHMA):
 
                     async def register():
                         ref = await self._get_transfer_ref()
-                        await ref.register_direct_gpu_v1(
-                            ticket, request.request_id, blocks
-                        )
+                        if getattr(self, "_history_enabled", False):
+                            hashes = self._build_xavier_hashes(
+                                request.prompt_token_ids[:token_count]
+                            )
+                            await ref.register_direct_gpu_v1(
+                                ticket,
+                                request.request_id,
+                                blocks,
+                                [key for key, _ in hashes[:count]],
+                                len(block_ids),
+                            )
+                        else:
+                            await ref.register_direct_gpu_v1(
+                                ticket, request.request_id, blocks
+                            )
 
                     self._call(register())
                 return bool(blocks), {
@@ -503,6 +564,10 @@ class XavierConnector(KVConnectorBase_V1, SupportsHMA):
             )
             await self._transfer_ref.configure_snapshots_v1(self._num_cache_blocks)
         return self._transfer_ref
+
+    async def _release_history_request(self, lease):
+        transfer = await self._get_transfer_ref()
+        await transfer.release_direct_history_v1(lease)
 
     async def _reserve_load_request(self, request):
         transfer = await self._get_transfer_ref()
@@ -848,7 +913,24 @@ class XavierConnector(KVConnectorBase_V1, SupportsHMA):
 
         async def load():
             if self._direct_test:
-                await transfer.load_direct_gpu_v1(entries, [r.lease for r in requests])
+                historical = [
+                    i for i, r in enumerate(requests) if r.lease.startswith("history:")
+                ]
+                direct = [
+                    i
+                    for i, r in enumerate(requests)
+                    if not r.lease.startswith("history:")
+                ]
+                if historical:
+                    await transfer.load_direct_history_v1(
+                        [entries[i] for i in historical],
+                        [requests[i].lease for i in historical],
+                    )
+                if direct:
+                    await transfer.load_direct_gpu_v1(
+                        [entries[i] for i in direct],
+                        [requests[i].lease for i in direct],
+                    )
             else:
                 await transfer.load_gpu_requests_v1(
                     entries, [(r.lease, r.transfers) for r in requests]
