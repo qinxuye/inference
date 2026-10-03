@@ -102,6 +102,8 @@ def test_pd_gpu(pd_cluster, backend):
             max_model_len=2048,
             gpu_memory_utilization=0.5,
             dtype="float16",
+            enable_prefix_caching=False,
+            xavier_gpu_cache_bytes=0 if backend == "xavier" else None,
             replica_config=[
                 {
                     "role": role,
@@ -152,13 +154,13 @@ def test_pd_gpu(pd_cluster, backend):
             evidence = log_since(offset)
             # Require actual KV transfer, not merely a successful recomputation.
             if backend == "xavier":
-                assert "Stage Xavier V1 blocks" in evidence
-                assert "Load Xavier V1 blocks" in evidence
+                assert "Register Xavier direct handoff" in evidence
+                assert "Complete Xavier GPU load" in evidence
             else:
                 assert "calling _read_blocks" in evidence
                 assert re.search(r"and [1-9]\d* requests done recving", evidence)
-        # Repeated prompts may hit decode's local prefix cache, but must still
-        # yield the same deterministic answer without stale or corrupted KV.
+        # Fix both local and historical prefix lengths at zero. Different
+        # prefill shapes can change BF16 greedy output even with valid KV.
         for stream in (False, True):
             assert chat(str(stream), stream) == responses[stream]
 
@@ -171,7 +173,7 @@ def test_pd_gpu(pd_cluster, backend):
             for future in futures:
                 future.result(timeout=180)
         pattern = (
-            r"Load Xavier V1 blocks: request=(\S+)"
+            r"Complete Xavier GPU load: request=(\S+)"
             if backend == "xavier"
             else r"with remote block size \d+ for req (\S+)"
         )

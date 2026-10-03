@@ -1011,3 +1011,20 @@ async def test_packed_hit_evicted_by_preceding_admission_is_copied(monkeypatch):
     assert list(r.store.blocks) == [4, 2]
     assert r.store.publish([3, 4, 2], {"K"}) == [4, 2]
     assert r.store.read("K", [2]).tolist() == [[2, -2]]
+
+
+@pytest.mark.parametrize("version,nixl", [("0.11.0", True), ("0.11.1", False)])
+def test_gpu_transfer_missing_dependency_fails_without_cpu_fallback(
+    monkeypatch, version, nixl
+):
+    import importlib.metadata
+    import importlib.util
+
+    from ..transport import gpu_pool_options
+
+    monkeypatch.setattr(importlib.metadata, "version", lambda name: version)
+    monkeypatch.setattr(
+        importlib.util, "find_spec", lambda name: object() if nixl else None
+    )
+    with pytest.raises(RuntimeError, match=r"xoscar\[nixl\]>=0.11.1"):
+        gpu_pool_options("10.0.0.1:1234", {})

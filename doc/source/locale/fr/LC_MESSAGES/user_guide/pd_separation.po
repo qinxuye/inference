@@ -416,3 +416,62 @@ msgstr "Si la préparation des instantanés échoue, Xavier attend la fin des op
 #: user_guide/pd_separation.rst:211
 msgid "With this path, KV loads run asynchronously in the TransferActor, allowing other ready requests to continue decoding. Cancelling a request retains its destination blocks and snapshot leases until the transfer finishes."
 msgstr "Avec ce chemin, le TransferActor charge les KV de manière asynchrone, ce qui permet aux autres requêtes prêtes de poursuivre le décodage. Lorsqu’une requête est annulée, ses blocs de destination et ses baux de snapshots sont conservés jusqu’à la fin du transfert."
+
+#: user_guide/pd_separation.rst:1
+msgid ""
+"Xavier P/D uses GPU-to-GPU handoff by default. It requires Linux, NVIDIA "
+"GPUs, vLLM >= 0.21.0 and ``xoscar[nixl]>=0.11.1`` in both worker and model "
+"environments. Use a reachable host address (not ``0.0.0.0``). Missing NIXL "
+"fails the launch; there is no CPU fallback."
+msgstr ""
+"Xavier P/D utilise par défaut le transfert direct entre GPU. Il nécessite "
+"Linux, des GPU NVIDIA, vLLM >= 0.21.0 et ``xoscar[nixl]>=0.11.1`` dans les "
+"environnements du worker et du modèle. Utilisez une adresse hôte accessible "
+"(pas ``0.0.0.0``). Sans NIXL, le démarrage échoue ; aucun repli CPU n’est "
+"prévu."
+
+#: user_guide/pd_separation.rst:1
+msgid ""
+"``xavier_gpu_cache_bytes`` defaults to ``268435456`` (256 MiB per replica) "
+"for P/D. History uses GPU first and spills to CPU when GPU capacity is "
+"exhausted. CPU history is bounded by the engine KV block capacity and can "
+"approach that cache size in host memory. CPU hits restore KV to GPU; misses "
+"compute locally. ``0`` disables history, retaining direct transfer. Transfer"
+" failures raise errors."
+msgstr ""
+"Pour P/D, ``xavier_gpu_cache_bytes`` vaut par défaut ``268435456`` (256 MiB "
+"par réplique). L’historique utilise d’abord le GPU puis déborde vers le CPU "
+"lorsque sa capacité est épuisée. L’historique CPU est limité par la capacité"
+" en blocs KV du moteur et peut approcher cette taille de cache en mémoire "
+"hôte. Les accès CPU restaurent les KV sur le GPU ; les défauts sont calculés"
+" localement. ``0`` désactive l’historique tout en conservant le transfert "
+"direct. Les échecs de transfert produisent des erreurs."
+
+#: user_guide/pd_separation.rst:1
+msgid ""
+"Producer blocks stay owned until decoder reads and optional history copies "
+"finish. History uses one writer with bounded staging and a soft deadline. "
+"When full, new content must be observed again before replacing existing "
+"blocks; active read leases prevent eviction."
+msgstr ""
+"Les blocs du producteur restent réservés jusqu’à la fin des lectures du "
+"décodeur et des copies facultatives de l’historique. L’historique utilise un"
+" seul écrivain avec une préparation bornée et une échéance souple. Une fois "
+"plein, un nouveau contenu doit être observé à nouveau avant de remplacer des"
+" blocs existants ; les baux de lecture actifs empêchent leur éviction."
+
+#: user_guide/pd_separation.rst:1
+msgid "Direct handoff and tiered history"
+msgstr "Transfert direct et historique hiérarchisé"
+
+#: user_guide/pd_separation.rst:1
+msgid "Hybrid replica snapshots"
+msgstr "Instantanés des répliques hybrides"
+
+#: user_guide/pd_separation.rst:1
+msgid "Hybrid replica GPU-first cache"
+msgstr "Cache privilégiant le GPU pour les répliques hybrides"
+
+#: user_guide/pd_separation.rst:194
+msgid "Direct handoff currently requires ``n=1``."
+msgstr "Le transfert direct nécessite actuellement ``n=1``."

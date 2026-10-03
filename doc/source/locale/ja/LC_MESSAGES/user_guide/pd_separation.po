@@ -384,3 +384,54 @@ msgstr "スナップショットのステージングに失敗すると、Xavier
 #: user_guide/pd_separation.rst:211
 msgid "With this path, KV loads run asynchronously in the TransferActor, allowing other ready requests to continue decoding. Cancelling a request retains its destination blocks and snapshot leases until the transfer finishes."
 msgstr "この経路では TransferActor が KV を非同期に読み込むため、準備済みの他のリクエストはデコードを続行できます。リクエストをキャンセルしても、転送が完了するまで転送先ブロックとスナップショットのリースは保持されます。"
+
+#: user_guide/pd_separation.rst:1
+msgid ""
+"Xavier P/D uses GPU-to-GPU handoff by default. It requires Linux, NVIDIA "
+"GPUs, vLLM >= 0.21.0 and ``xoscar[nixl]>=0.11.1`` in both worker and model "
+"environments. Use a reachable host address (not ``0.0.0.0``). Missing NIXL "
+"fails the launch; there is no CPU fallback."
+msgstr ""
+"Xavier P/D はデフォルトで GPU 間の直接転送を使用します。Linux、NVIDIA GPU、vLLM >= "
+"0.21.0、およびワーカーとモデルの両環境に ``xoscar[nixl]>=0.11.1`` "
+"が必要です。到達可能なホストアドレスを使用してください（``0.0.0.0`` は不可）。NIXL がなければ起動に失敗し、CPU "
+"へフォールバックしません。"
+
+#: user_guide/pd_separation.rst:1
+msgid ""
+"``xavier_gpu_cache_bytes`` defaults to ``268435456`` (256 MiB per replica) "
+"for P/D. History uses GPU first and spills to CPU when GPU capacity is "
+"exhausted. CPU history is bounded by the engine KV block capacity and can "
+"approach that cache size in host memory. CPU hits restore KV to GPU; misses "
+"compute locally. ``0`` disables history, retaining direct transfer. Transfer"
+" failures raise errors."
+msgstr ""
+"P/D の ``xavier_gpu_cache_bytes`` はデフォルトで ``268435456`` （レプリカ当たり 256 "
+"MiB）です。履歴は GPU を優先し、容量不足時に CPU に退避します。CPU 履歴のブロック数はエンジン KV "
+"ブロック容量が上限で、ホストメモリ使用量はそのキャッシュサイズに近づく場合があります。CPU ヒットでは KV を GPU "
+"に復元し、ミスではローカル計算します。 ``0`` は履歴を無効にし、直接転送は維持します。転送失敗はエラーになります。"
+
+#: user_guide/pd_separation.rst:1
+msgid ""
+"Producer blocks stay owned until decoder reads and optional history copies "
+"finish. History uses one writer with bounded staging and a soft deadline. "
+"When full, new content must be observed again before replacing existing "
+"blocks; active read leases prevent eviction."
+msgstr ""
+"プロデューサーのブロックはデコーダーの読み取りと任意の履歴コピーが完了するまで保持されます。履歴は単一の書き込み処理、上限付きステージング、ソフト期限を使用します。満杯になると、新しい内容は再度観測されるまで既存ブロックを置き換えません。有効な読み取りリースは削除を防ぎます。"
+
+#: user_guide/pd_separation.rst:1
+msgid "Direct handoff and tiered history"
+msgstr "直接転送と階層型履歴"
+
+#: user_guide/pd_separation.rst:1
+msgid "Hybrid replica snapshots"
+msgstr "ハイブリッドレプリカのスナップショット"
+
+#: user_guide/pd_separation.rst:1
+msgid "Hybrid replica GPU-first cache"
+msgstr "ハイブリッドレプリカの GPU 優先キャッシュ"
+
+#: user_guide/pd_separation.rst:194
+msgid "Direct handoff currently requires ``n=1``."
+msgstr "直接転送は現在 ``n=1`` を必要とします。"

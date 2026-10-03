@@ -11,10 +11,7 @@ No enterprise package or License is required.
 Launch
 ------
 
-For Xavier, use NVIDIA GPUs and a reachable host address (not ``0.0.0.0``). The V1 connector
-requires vLLM 0.21.0 or newer. The existing V0 Xavier adapter is retained for
-vLLM versions below 0.11.0; versions 0.11 through 0.20 are not supported by this
-V1 connector. GPU integration CI pins vLLM 0.21.0.
+Xavier P/D uses GPU-to-GPU handoff by default. It requires Linux, NVIDIA GPUs, vLLM >= 0.21.0 and ``xoscar[nixl]>=0.11.1`` in both worker and model environments. Use a reachable host address (not ``0.0.0.0``). Missing NIXL fails the launch; there is no CPU fallback.
 
 The example starts one prefill replica on GPU 0 and one decode replica on GPU 1.
 Replace the worker address with the full ``ip:port`` reported by
@@ -187,6 +184,18 @@ The V1 connector currently requires one GPU per replica (TP=1, PP=1), text-only
 models, and no LoRA adapters. Multimodal models, prompt embeddings and salted
 prompts are rejected until their cache identities and partitioning are supported.
 
+Direct handoff and tiered history
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``xavier_gpu_cache_bytes`` defaults to ``268435456`` (256 MiB per replica) for P/D. History uses GPU first and spills to CPU when GPU capacity is exhausted. CPU history is bounded by the engine KV block capacity and can approach that cache size in host memory. CPU hits restore KV to GPU; misses compute locally. ``0`` disables history, retaining direct transfer. Transfer failures raise errors.
+
+Direct handoff currently requires ``n=1``.
+
+Producer blocks stay owned until decoder reads and optional history copies finish. History uses one writer with bounded staging and a soft deadline. When full, new content must be observed again before replacing existing blocks; active read leases prevent eviction.
+
+Hybrid replica snapshots
+~~~~~~~~~~~~~~~~~~~~~~~~
+
 CPU snapshots are keyed by prompt content rather than reusable GPU block IDs.
 Readers reserve complete snapshots during transfer; cache pressure or a missing
 snapshot falls back to local computation. The number of retained CPU blocks is
@@ -199,8 +208,8 @@ replicas release only the requested completed sequence; ordinary hybrid and
 decode replicas retain normal automatic cleanup.
 
 
-GPU-first Xavier cache (experimental)
--------------------------------------
+Hybrid replica GPU-first cache
+------------------------------
 
 GPU-first caching requires the Xavier backend and more than one replica.
 

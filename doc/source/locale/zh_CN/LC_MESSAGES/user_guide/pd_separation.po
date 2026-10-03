@@ -385,3 +385,52 @@ msgstr "如果快照暂存失败，Xavier 会等待未完成的 CUDA 工作并�
 #: user_guide/pd_separation.rst:211
 msgid "With this path, KV loads run asynchronously in the TransferActor, allowing other ready requests to continue decoding. Cancelling a request retains its destination blocks and snapshot leases until the transfer finishes."
 msgstr "此路径由 TransferActor 异步加载 KV，其他已就绪的请求可以继续解码。取消请求后，其目标块和快照租约仍会保留，直到传输完成。"
+
+#: user_guide/pd_separation.rst:1
+msgid ""
+"Xavier P/D uses GPU-to-GPU handoff by default. It requires Linux, NVIDIA "
+"GPUs, vLLM >= 0.21.0 and ``xoscar[nixl]>=0.11.1`` in both worker and model "
+"environments. Use a reachable host address (not ``0.0.0.0``). Missing NIXL "
+"fails the launch; there is no CPU fallback."
+msgstr ""
+"Xavier P/D 默认使用 GPU 到 GPU 直传。要求 Linux、NVIDIA GPU、vLLM >= 0.21.0，并在 worker "
+"和模型环境中都安装 ``xoscar[nixl]>=0.11.1``。请使用可达的主机地址（不能是 ``0.0.0.0``）。缺少 NIXL "
+"时启动失败，不回退 CPU。"
+
+#: user_guide/pd_separation.rst:1
+msgid ""
+"``xavier_gpu_cache_bytes`` defaults to ``268435456`` (256 MiB per replica) "
+"for P/D. History uses GPU first and spills to CPU when GPU capacity is "
+"exhausted. CPU history is bounded by the engine KV block capacity and can "
+"approach that cache size in host memory. CPU hits restore KV to GPU; misses "
+"compute locally. ``0`` disables history, retaining direct transfer. Transfer"
+" failures raise errors."
+msgstr ""
+"P/D 的 ``xavier_gpu_cache_bytes`` 默认为 ``268435456`` （每副本 256 MiB）。历史缓存优先使用 "
+"GPU，GPU 容量不足时下沉 CPU。CPU 历史块数受引擎 KV 块容量限制，主机内存占用可能接近该缓存大小。CPU 命中时将 KV 恢复到 "
+"GPU，未命中时本地计算。 ``0`` 禁用历史缓存，仍保留直传。传输失败时报错。"
+
+#: user_guide/pd_separation.rst:1
+msgid ""
+"Producer blocks stay owned until decoder reads and optional history copies "
+"finish. History uses one writer with bounded staging and a soft deadline. "
+"When full, new content must be observed again before replacing existing "
+"blocks; active read leases prevent eviction."
+msgstr ""
+"生产者块在解码端读取和可选历史复制完成之前保持占用。历史缓存采用单写入任务、有界暂存和软截止时间。容量满后，新内容须再次出现才能替换已有块；活动读取租约禁止淘汰。"
+
+#: user_guide/pd_separation.rst:1
+msgid "Direct handoff and tiered history"
+msgstr "直传与分层历史缓存"
+
+#: user_guide/pd_separation.rst:1
+msgid "Hybrid replica snapshots"
+msgstr "混合副本快照"
+
+#: user_guide/pd_separation.rst:1
+msgid "Hybrid replica GPU-first cache"
+msgstr "混合副本的 GPU 优先缓存"
+
+#: user_guide/pd_separation.rst:194
+msgid "Direct handoff currently requires ``n=1``."
+msgstr "直传目前要求 ``n=1``。"
