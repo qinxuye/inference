@@ -447,11 +447,12 @@ class PDModelActor(xo.StatelessActor):
             if hasattr(result, "__aiter__"):
                 async for _ in result:
                     pass
+            prefill_finished = time.perf_counter()
             logger.debug(
                 "PD prefill complete: request=%s backend=%s elapsed_s=%.6f",
                 request_id,
                 self._transport_backend,
-                time.perf_counter() - prefill_start,
+                prefill_finished - prefill_start,
             )
             payload = json.loads(result) if isinstance(result, (bytes, str)) else result
             transfer = (
@@ -492,8 +493,18 @@ class PDModelActor(xo.StatelessActor):
             return result
 
         async def stream():
+            first_response = True
             try:
                 async for chunk in result:
+                    if first_response:
+                        logger.debug(
+                            "PD first decode response: request=%s backend=%s "
+                            "post_prefill_s=%.6f",
+                            request_id,
+                            self._transport_backend,
+                            time.perf_counter() - prefill_finished,
+                        )
+                        first_response = False
                     # The producer owns/sends KV after its prefill RPC returns.
                     # D's first response is the available completion boundary;
                     # do not count the rest of a streaming decode as P load.

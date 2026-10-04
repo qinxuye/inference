@@ -149,6 +149,45 @@ measurements, not evidence of four-GPU scaling or a general speedup. Follow-up
 performance work needs an exclusive GPU window, longer runs and mixed prompt
 lengths to distinguish scheduling and handoff costs from cache savings.
 
+#### Sustained and mixed-length validation
+
+Enable `XINFERENCE_TEST_PD_AFFINITY_LONG=1` for 2,400 concurrent requests per
+profile, with fixed input length followed by mixed lengths (approximately
+500, 900, 1,800 and 3,200 input tokens). Each profile first runs 12 cold and
+36 shuffled repeated requests. Both profiles run in the same deployment;
+cache contents persist across the workload transition. Four deployments use
+the same ABBA order, seed, model and GPU budgets as above. An optional
+`XINFERENCE_TEST_PD_AFFINITY_PROFILES=uniform` selects only fixed lengths;
+`XINFERENCE_TEST_PD_AFFINITY_DOCUMENTS` and
+`XINFERENCE_TEST_PD_AFFINITY_REQUESTS` override the working-set and concurrent
+request counts (the latter must be a positive multiple of the former).
+
+Long runs sample GPU process ownership once per second. Foreign GPU processes
+invalidate the measurement; monitor failures also fail the test. Explicitly
+allowlisted idle daemons can be recorded with
+`XINFERENCE_TEST_PD_IDLE_GPU_PIDS=pid1,pid2`. The completed run recorded 608
+samples without foreign GPU processes and passed all 19,584 requests. This is
+sampled interference detection, not an exclusive hardware reservation.
+
+| Policy and repetition | Profile | Requests/s | TTFT p95 (ms) | P RPC / post-P p50 (ms) |
+| --- | --- | ---: | ---: | ---: |
+| round_robin 0 | uniform | 34.68 | 154.3 | 37.7 / 64.7 |
+| round_robin 0 | mixed | 34.79 | 173.7 | 33.2 / 64.5 |
+| affinity 0 | uniform | 34.08 | 157.3 | 36.5 / 65.9 |
+| affinity 0 | mixed | 34.01 | 177.8 | 34.4 / 65.7 |
+| affinity 1 | uniform | 33.85 | 156.2 | 37.3 / 66.5 |
+| affinity 1 | mixed | 33.75 | 182.0 | 34.3 / 66.0 |
+| round_robin 1 | uniform | 33.61 | 159.1 | 38.7 / 66.7 |
+| round_robin 1 | mixed | 33.71 | 179.1 | 33.9 / 66.2 |
+
+Neither workload showed a consistent concurrent speedup. Fixed-length sequential
+reuse did improve TTFT p95 (85.3–85.9 ms with affinity versus 107.4–109.6 ms
+with round robin), but that did not translate into sustained throughput.
+The post-P interval includes decode RPC/queueing, KV load and first execution;
+it is not a pure transfer measurement. All methods use the same DEBUG evidence
+logging, so absolute rates include instrumentation overhead. The working sets
+and small model constrain the scope of these measurements.
+
 ### One producer and one decoder
 
 Use two free NVIDIA GPUs and the pinned vLLM environment, with NIXL installed. Run from the repository root:

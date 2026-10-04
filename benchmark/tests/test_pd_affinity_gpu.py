@@ -7,6 +7,8 @@ import json
 import os
 import random
 import re
+import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -17,6 +19,56 @@ pytestmark = pytest.mark.skipif(
     os.environ.get("XINFERENCE_TEST_PD_AFFINITY_GPU") != "1",
     reason="requires two CUDA GPUs and local Qwen2.5-0.5B weights",
 )
+
+
+def _gpu_snapshot():
+    """Record foreign GPU processes; known idle daemons must be explicit."""
+    import psutil
+
+    output = subprocess.run(
+        ["nvidia-smi", "--query-compute-apps=pid", "--format=csv,noheader"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    ).stdout
+    gpu_pids = {int(line.strip()) for line in output.splitlines() if line.strip()}
+    own = {os.getpid(), *(p.pid for p in psutil.Process().children(recursive=True))}
+    allowed = {
+        int(pid)
+        for pid in os.environ.get("XINFERENCE_TEST_PD_IDLE_GPU_PIDS", "").split(",")
+        if pid
+    }
+    return {
+        "time": time.time(),
+        "gpu_pids": sorted(gpu_pids),
+        "foreign_pids": sorted(gpu_pids - own - allowed),
+        "allowed_idle_pids": sorted(allowed),
+    }
+
+
+async def _guarded_measure(bench, endpoint, uid, workload, concurrency):
+    samples = []
+    stopped = asyncio.Event()
+
+    async def monitor():
+        while True:
+            samples.append(await asyncio.to_thread(_gpu_snapshot))
+            try:
+                await asyncio.wait_for(stopped.wait(), timeout=1)
+                return
+            except asyncio.TimeoutError:
+                pass
+
+    task = asyncio.create_task(monitor())
+    try:
+        records, elapsed, _ = await bench.measure(
+            endpoint, uid, workload, concurrency, 1
+        )
+    finally:
+        stopped.set()
+        await task
+    return records, elapsed, samples
 
 
 @pytest.mark.parametrize("backend", ["xavier"])
@@ -44,29 +96,60 @@ def test_pd_affinity_benchmark(pd_cluster, backend, policy_name, run):  # noqa: 
     worker = client.get_workers_info()[0]["work-ip"]
     uid = "affinity-benchmark"
     loop = asyncio.new_event_loop()
-    documents = []
-    for i in range(12):
-        text = f"Document {i}: " + "Water evaporates and condenses in clouds. " * 200
-        documents.append(
-            {
-                "messages": [
-                    {"role": "user", "content": text + "\nBriefly explain rain."}
-                ],
-                "max_tokens": 16,
-                "temperature": 0,
-            }
+    long_run = os.environ.get("XINFERENCE_TEST_PD_AFFINITY_LONG") == "1"
+    document_count = int(os.environ.get("XINFERENCE_TEST_PD_AFFINITY_DOCUMENTS", "12"))
+    request_count = int(
+        os.environ.get(
+            "XINFERENCE_TEST_PD_AFFINITY_REQUESTS", "2400" if long_run else "120"
         )
-    rng = random.Random(173)
-    warm = []
-    for _ in range(3):
-        batch = list(documents)
-        rng.shuffle(batch)
-        warm.extend(batch)
-    phases = [
-        ("cold", documents, 1),
-        ("warm", warm, 1),
-        ("concurrent", warm[:24] * 5, 8),
-    ]
+    )
+    assert (
+        document_count > 0 and request_count > 0 and request_count % document_count == 0
+    )
+    profiles = os.environ.get(
+        "XINFERENCE_TEST_PD_AFFINITY_PROFILES",
+        "uniform,mixed" if long_run else "uniform",
+    ).split(",")
+    assert all(profile in {"uniform", "mixed"} for profile in profiles)
+    phases = []
+    for profile in profiles:
+        documents = []
+        for i in range(document_count):
+            repetitions = (50, 100, 200, 350)[i % 4] if profile == "mixed" else 200
+            text = (
+                f"{profile} Document {i}: "
+                + "Water evaporates and condenses in clouds. " * repetitions
+            )
+            documents.append(
+                {
+                    "messages": [
+                        {"role": "user", "content": text + "\nBriefly explain rain."}
+                    ],
+                    "max_tokens": 16,
+                    "temperature": 0,
+                }
+            )
+        rng = random.Random(173)
+        warm = []
+        for _ in range(3):
+            batch = list(documents)
+            rng.shuffle(batch)
+            warm.extend(batch)
+        concurrent = []
+        for _ in range(request_count // document_count):
+            batch = list(documents)
+            rng.shuffle(batch)
+            concurrent.extend(batch)
+        prefix = profile + "_" if long_run else ""
+        phases.extend(
+            [
+                (prefix + "cold", documents, 1),
+                (prefix + "warm", warm, 1),
+                (prefix + "concurrent", concurrent, 8),
+            ]
+        )
+    output = Path(os.environ["XINFERENCE_TEST_PD_AFFINITY_RESULTS"])
+    output.mkdir(parents=True, exist_ok=True)
 
     async def select_policy():
         address = client._get_supervisor_internal_address()
@@ -116,6 +199,8 @@ def test_pd_affinity_benchmark(pd_cluster, backend, policy_name, run):  # noqa: 
             await router.add_decode_actor(name, ref)
 
     try:
+        if long_run:
+            assert not _gpu_snapshot()["foreign_pids"], "GPU is busy before launch"
         client.launch_model(
             model_uid=uid,
             model_name="qwen2.5-instruct",
@@ -145,9 +230,15 @@ def test_pd_affinity_benchmark(pd_cluster, backend, policy_name, run):  # noqa: 
         results = []
         for name, workload, concurrency in phases:
             offset = Path(log_path).stat().st_size
-            records, elapsed, _ = loop.run_until_complete(
-                bench.measure(endpoint, uid, workload, concurrency, 1)
-            )
+            started = time.time()
+            if long_run:
+                records, elapsed, gpu_samples = loop.run_until_complete(
+                    _guarded_measure(bench, endpoint, uid, workload, concurrency)
+                )
+            else:
+                records, elapsed, gpu_samples = loop.run_until_complete(
+                    bench.measure(endpoint, uid, workload, concurrency, 1)
+                )
             assert all(
                 "error" not in row and row["text"].strip() for row in records
             ), records
@@ -164,32 +255,51 @@ def test_pd_affinity_benchmark(pd_cluster, backend, policy_name, run):  # noqa: 
                     evidence,
                 )
             ]
+            post_prefill = [
+                float(v)
+                for v in re.findall(
+                    r"PD first decode response: request=\S+ backend=xavier post_prefill_s=([0-9.]+)",
+                    evidence,
+                )
+            ]
+            assert len(post_prefill) == len(records)
             assert len(prefill) == len(records)
             result = {
                 "phase": name,
+                "started_at": started,
+                "gpu_samples": gpu_samples,
                 "summary": bench.summarize(records, elapsed, 1.0, 0.05),
                 "history_requests": len(hits),
                 "history_gpu_blocks": sum(int(h[1]) for h in hits),
                 "history_cpu_blocks": sum(int(h[2]) for h in hits),
+                "post_prefill_p50_s": bench.percentile(post_prefill, 0.5),
+                "post_prefill_p95_s": bench.percentile(post_prefill, 0.95),
                 "prefill_p50_s": bench.percentile(prefill, 0.5),
                 "prefill_p95_s": bench.percentile(prefill, 0.95),
                 "records": records,
             }
             results.append(result)
+            (output / f"{policy_name}-{run}.json").write_text(
+                json.dumps(results, indent=2)
+            )
+            assert not any(
+                s["foreign_pids"] for s in gpu_samples
+            ), "Foreign GPU workload overlapped measurement; results are invalid"
             print(
                 "AFFINITY_PHASE "
                 + json.dumps(
                     {
                         "policy": policy_name,
                         "run": run,
-                        **{k: v for k, v in result.items() if k != "records"},
+                        **{
+                            k: v
+                            for k, v in result.items()
+                            if k not in {"records", "gpu_samples"}
+                        },
                     }
                 ),
                 flush=True,
             )
-        output = Path(os.environ["XINFERENCE_TEST_PD_AFFINITY_RESULTS"])
-        output.mkdir(parents=True, exist_ok=True)
-        (output / f"{policy_name}-{run}.json").write_text(json.dumps(results, indent=2))
     finally:
         if uid in client.list_models():
             client.terminate_model(uid)
