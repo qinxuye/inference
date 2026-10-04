@@ -14,11 +14,13 @@
 
 import asyncio
 import copy
+import hashlib
 import json
 import logging
 import time
 import uuid
 from abc import ABC, abstractmethod
+from collections import OrderedDict
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Set
 
 import xoscar as xo
@@ -70,6 +72,107 @@ class RoundRobinSchedulingPolicy(SchedulingPolicy):
         return f"RoundRobinSchedulingPolicy({len(self._model_replicas)} replicas)"
 
 
+class PrefixAffinitySchedulingPolicy(RoundRobinSchedulingPolicy):
+    """Bounded prefix hints with a limit on prefill load imbalance.
+
+    Hints identify previous successful requests, not guaranteed engine KV hits.
+    Cache eviction or approximate text matching may turn a hint into a miss;
+    the connector remains responsible for validating reusable cache contents.
+    """
+
+    def __init__(self, model_replicas, capacity: int = 4096):
+        super().__init__(model_replicas)
+        self._capacity = capacity
+        self._prefixes: OrderedDict[bytes, set] = OrderedDict()
+        self._pending: dict[object, set[str]] = {
+            replica: set() for replica in model_replicas
+        }
+
+    @staticmethod
+    def prefix_key(method: str, inputs) -> Optional[bytes]:
+        if isinstance(inputs, str):
+            prefix = inputs[:1024]
+        elif isinstance(inputs, list):
+            parts = []
+            remaining = 1024
+            for message in inputs:
+                if not isinstance(message, dict) or not isinstance(
+                    message.get("content"), str
+                ):
+                    return None
+                part = (
+                    str(message.get("role", ""))[:32]
+                    + "\0"
+                    + message["content"][:remaining]
+                )
+                parts.append(part[:remaining])
+                remaining -= len(parts[-1])
+                if not remaining:
+                    break
+            prefix = "\0".join(parts)
+        else:
+            return None
+        if len(prefix) < 256:
+            return None
+        return hashlib.blake2b(
+            (method + "\0" + prefix).encode(), digest_size=16
+        ).digest()
+
+    def schedule(self, key: Optional[bytes] = None):
+        if not self._model_replicas:
+            return super().schedule()
+        minimum = min(map(len, self._pending.values()))
+        preferred = self._prefixes.get(key, set()) if key is not None else set()
+        candidates = {
+            replica
+            for replica in self._model_replicas
+            if len(self._pending[replica]) == minimum
+        }
+        # One extra in-flight request is a bounded cost for avoiding a cold
+        # prefill. Larger imbalances fall back to the least-loaded replicas.
+        warm = {
+            replica
+            for replica in preferred
+            if len(self._pending[replica]) <= minimum + 1
+        }
+        if warm and key is not None:
+            candidates = warm
+            self._prefixes.move_to_end(key)
+        # Retain round-robin tie breaking for cold or equally warm replicas.
+        for _ in self._model_replicas:
+            replica = super().schedule()
+            if replica in candidates:
+                return replica
+        raise AssertionError("No prefill candidate")
+
+    def started(self, replica, request_id: str):
+        self._pending[replica].add(request_id)
+
+    def finished(self, replica, request_id: str):
+        if replica in self._pending:
+            self._pending[replica].discard(request_id)
+
+    def remember(self, key: Optional[bytes], replica):
+        if key is None or replica not in self._pending:
+            return
+        self._prefixes.setdefault(key, set()).add(replica)
+        self._prefixes.move_to_end(key)
+        while len(self._prefixes) > self._capacity:
+            self._prefixes.popitem(last=False)
+
+    def update_replicas(self, model_replicas):
+        super().update_replicas(model_replicas)
+        current = set(model_replicas)
+        self._pending = {r: self._pending.get(r, set()) for r in model_replicas}
+        for key, replicas in list(self._prefixes.items()):
+            replicas.intersection_update(current)
+            if not replicas:
+                del self._prefixes[key]
+
+    def __repr__(self) -> str:
+        return f"PrefixAffinitySchedulingPolicy({len(self._model_replicas)} replicas)"
+
+
 class PDModelActor(xo.StatelessActor):
     """PD分离模型Actor - 支持多P多D"""
 
@@ -89,6 +192,7 @@ class PDModelActor(xo.StatelessActor):
         # Prefill request map, used to skip the timeout task for specific request id.
         self._request_set: Set[str] = set()
         self._direct_transfers: dict[str, dict] = {}
+        self._prefill_inflight: dict[str, tuple] = {}
 
         self._model_uid = model_uid
         self._transport_backend = transport_backend
@@ -240,12 +344,19 @@ class PDModelActor(xo.StatelessActor):
         # API callers still invoke this compatibility method on the router.
         pass
 
+    def _finish_prefill(self, request_id: str) -> None:
+        active = self._prefill_inflight.pop(request_id, None)
+        if active is not None:
+            policy, replica = active
+            policy.finished(replica, request_id)
+
     @log_async(logger=logger)
     async def free_prefill_model_cache(self, request_id: str):
         """释放prefill模型缓存"""
         logger.debug(
             f"[PDModelActor] Free prefill model cache for request {request_id}"
         )
+        self._finish_prefill(request_id)
         handoff = self._direct_transfers.pop(request_id, None)
         if handoff and handoff.get("ticket"):
             try:
@@ -292,7 +403,17 @@ class PDModelActor(xo.StatelessActor):
         if args and args[0] and args[0].get("n", 1) != 1:
             # Handoff leases cover one decoder, not parallel sampling children.
             raise ValueError("PD KV handoff currently requires n=1")
-        prefill = self._prefill_policy.schedule()
+        affinity = (
+            self._prefill_policy
+            if isinstance(self._prefill_policy, PrefixAffinitySchedulingPolicy)
+            else None
+        )
+        prefix_key = affinity.prefix_key(method, inputs) if affinity else None
+        prefill = (
+            affinity.schedule(prefix_key)
+            if affinity
+            else self._prefill_policy.schedule()
+        )
         decode = self._decode_policy.schedule()
         logger.debug(
             "PD route: request=%s prefill=%s decode=%s backend=%s",
@@ -317,6 +438,9 @@ class PDModelActor(xo.StatelessActor):
         self._request_set.add(request_id)
         prefill_start = time.perf_counter()
         try:
+            if affinity:
+                affinity.started(prefill, request_id)
+                self._prefill_inflight[request_id] = (affinity, prefill)
             result = await actor_call(
                 prefill, method, inputs, *prefill_args, **prefill_kwargs
             )
@@ -361,6 +485,8 @@ class PDModelActor(xo.StatelessActor):
             raise
         if not hasattr(result, "__aiter__"):
             # A successful D response has already completed its handoff.
+            if affinity:
+                affinity.remember(prefix_key, prefill)
             self._direct_transfers.pop(request_id, None)
             await self.free_prefill_model_cache(request_id)
             return result
@@ -368,7 +494,13 @@ class PDModelActor(xo.StatelessActor):
         async def stream():
             try:
                 async for chunk in result:
+                    # The producer owns/sends KV after its prefill RPC returns.
+                    # D's first response is the available completion boundary;
+                    # do not count the rest of a streaming decode as P load.
+                    self._finish_prefill(request_id)
                     yield chunk
+                if affinity:
+                    affinity.remember(prefix_key, prefill)
                 self._direct_transfers.pop(request_id, None)
             finally:
                 try:

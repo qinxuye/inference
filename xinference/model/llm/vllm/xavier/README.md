@@ -87,6 +87,68 @@ This setup validates multi-replica behavior on two GPUs. The colocated engines
 share compute and memory bandwidth, so its performance does not establish
 four-GPU scaling.
 
+### Prefix-affinity routing experiment
+
+The opt-in benchmark compares round-robin routing with bounded prefix hints on
+2P2D sharing two GPUs. Each policy gets a fresh deployment, all four transfer
+pairs are warmed before measurement, and ABBA ordering reduces run-order bias:
+
+```bash
+XINFERENCE_TEST_PD_AFFINITY_GPU=1 \
+XINFERENCE_ALLOW_MULTI_REPLICA_PER_GPU=1 \
+XINFERENCE_TEST_PD_VLLM_LOG_LEVEL=INFO \
+XINFERENCE_TEST_PD_MODEL_PATH=/path/to/Qwen2.5-0.5B-Instruct \
+XINFERENCE_TEST_PD_AFFINITY_RESULTS=/tmp/pd-affinity-results \
+  python -m pytest -vs benchmark/tests/test_pd_affinity_gpu.py
+```
+
+The runner records cold document prefixes, shuffled repeated prefixes and eight
+concurrent requests. JSON results include TTFT, TPOT, prefill RPC latency and
+actual GPU/CPU history block restores. Connection warm-up is excluded from these
+measurements; production's first use of a new P/D pair still pays that cost.
+The candidate policy is injected only by this benchmark; the production default
+remains round robin until measurements justify changing it.
+
+#### Exploratory measurements (2026-10-05)
+
+Qwen2.5-0.5B-Instruct FP16, vLLM 0.21.0, xoscar 0.11.1 and NIXL 1.1
+on two RTX 3090 Ti GPUs with NVLink. Two P replicas share GPU 0 and two D
+replicas share GPU 1. Each replica uses `gpu_memory_utilization=0.35`, eager
+execution, engine prefix caching disabled and the default 256 MiB Xavier GPU
+history. Each deployment measures 12 cold documents (1839–1840 input tokens),
+36 shuffled repeated documents sequentially, then 120 requests at concurrency
+8; every request generates 16 tokens. All four cases passed (672 requests).
+All reported history restores used GPU memory; CPU spill was not exercised.
+
+The final candidate prefers a previously successful prefix while allowing at
+most one extra outstanding request relative to the least-loaded producer.
+Its load count includes KV handoff until the first D response for streams,
+or the complete response for non-streaming calls. These are routing hints,
+not engine queue lengths or guaranteed cache hits.
+
+| Policy and repetition | Repeated TTFT p50 / p95 (ms) | Repeated GPU blocks restored | Concurrent requests/s | Concurrent TTFT p95 (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| round_robin 0 | 86.6 / 114.1 | 2956 | 30.56 | 200.9 |
+| affinity 0 | 81.1 / 86.9 | 4068 | 33.89 | 181.7 |
+| affinity 1 | 81.1 / 114.4 | 4086 | 33.80 | 191.3 |
+| round_robin 1 | 83.7 / 109.5 | 2674 | 34.57 | 164.7 |
+
+Prefix hints increased sequential history reuse, but concurrent throughput
+ranges overlap and tail latency did not consistently improve. Earlier variants
+that stopped counting P load at the end of its RPC likewise failed to show a
+stable concurrent benefit. These results do not justify enabling the policy by
+default. This benchmark compares Xavier routing policies, not Xavier against
+native vLLM NIXL.
+
+Each deployment now has an isolated non-rotating evidence log. An earlier run
+was discarded because shared log rotation lost phase counters despite successful
+responses. A separate SGLang job was observed during the final deployment's
+startup; exclusive hardware isolation was not established. With short measured
+phases, colocated replicas and only two repetitions, these are exploratory
+measurements, not evidence of four-GPU scaling or a general speedup. Follow-up
+performance work needs an exclusive GPU window, longer runs and mixed prompt
+lengths to distinguish scheduling and handoff costs from cache savings.
+
 ### One producer and one decoder
 
 Use two free NVIDIA GPUs and the pinned vLLM environment, with NIXL installed. Run from the repository root:
