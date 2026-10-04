@@ -40,6 +40,12 @@ def pd_cluster(monkeypatch, tmp_path, backend):
         "level": "DEBUG",
         "propagate": False,
     }
+    # Tensor repr at DEBUG forces device synchronization during GPU tests.
+    logging_config["loggers"]["vllm.ir.op"] = {
+        "handlers": ["stream_handler", "file_handler"],
+        "level": "WARNING",
+        "propagate": False,
+    }
     config_path = tmp_path / "vllm-logging.json"
     config_path.write_text(json.dumps(logging_config))
     monkeypatch.setenv("VLLM_LOGGING_CONFIG_PATH", str(config_path))
