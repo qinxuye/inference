@@ -107,6 +107,7 @@ class TransformersQwen3ASRAudioModel(Qwen3ASRModel, AudioEngineModel):
 
 class VLLMQwen3ASRAudioModel(VLLMQwen3ASRModel, AudioEngineModel):
     required_libs = ("vllm", "silero_vad", "onnxruntime")
+    replica_autoscaling = "native"
 
     @classmethod
     def match(cls, model_family: "AudioModelFamilyV2") -> bool:
@@ -126,6 +127,7 @@ class VLLMQwen3ASRAudioModel(VLLMQwen3ASRModel, AudioEngineModel):
 
 class VLLMQwen3TTSAudioModel(VLLMOmniTTSModel, AudioEngineModel):
     required_libs = ("vllm", "vllm_omni")
+    replica_autoscaling = "native"
 
     @classmethod
     def match(cls, model_family: "AudioModelFamilyV2") -> bool:

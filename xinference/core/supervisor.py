@@ -85,6 +85,7 @@ from .exceptions import ModelNotReadyError
 from .launch_strategy import IdleFirstLaunchStrategy
 from .metrics import record_metrics
 from .model_reload import ModelReloadMixin
+from .realtime.protocol import RealtimeError
 from .replica_config import (
     ReplicaConfig,
     normalize_replica_configs,
@@ -6634,6 +6635,39 @@ class SupervisorActor(ModelReloadMixin, SupervisorHandoffMixin, xo.StatelessActo
         self, model_uid: str, routing_key: str, reservation_id: str
     ) -> Tuple[xo.ActorRefType["ModelActor"], bool]:
         return await self._select_model(model_uid, routing_key, reservation_id)
+
+    async def get_realtime_endpoint(
+        self, model_uid: str, subject: str, task: str
+    ) -> Dict[str, Any]:
+        state = self._replica_autoscalers.get(model_uid)
+        if state is None:
+            model = await self.get_model(model_uid)
+            return await model.get_realtime_endpoint(subject, task)
+        info = self._model_uid_to_replica_info.get(model_uid)
+        if info is None or not info.active_replica_ids:
+            raise RealtimeError("endpoint_unavailable", "Model is not ready", 1013)
+        ids = list(info.active_replica_ids)
+        start = ids.index(next(info.scheduler))
+        candidates = sorted(ids[start:] + ids[:start], key=state.should_avoid)
+        busy = False
+        for replica_id in candidates:
+            if replica_id in state.draining:
+                continue
+            try:
+                model = await self._get_replica_model(model_uid, replica_id)
+                return await model.get_realtime_endpoint(subject, task)
+            except RealtimeError as exc:
+                if exc.code == "capacity_exceeded":
+                    busy = True
+                elif exc.code != "endpoint_unavailable":
+                    raise
+            except ModelNotReadyError:
+                continue
+        if busy:
+            raise RealtimeError(
+                "capacity_exceeded", "Realtime capacity unavailable", 1013
+            )
+        raise RealtimeError("endpoint_unavailable", "Model is not ready", 1013)
 
     async def _select_model(
         self,

@@ -207,7 +207,11 @@ def _count_replica_work(
     model: "ModelActor", reservation_id: Optional[str] = None
 ) -> int:
     realtime = getattr(model, "_realtime_runtime", None)
-    realtime_count = realtime.active_count if realtime is not None else 0
+    realtime_count = (
+        realtime.active_count + getattr(realtime, "pending_admissions", 0)
+        if realtime is not None
+        else 0
+    )
     reserved = _pending_chat_reservations(model, reservation_id)
     return model._serve_count + realtime_count + reserved
 
@@ -1025,10 +1029,7 @@ class ModelActor(ModelGenerationMixin, xo.StatelessActor, CancelMixin):
             inference_lock=self._lock,
             admission=lambda: self._model_state == "ready"
             and not self.__dict__.get("_replica_draining")
-            and self._serve_count
-            + runtime.active_count
-            + _pending_chat_reservations(self)
-            < self.__dict__.get("_replica_concurrency", self._request_limits),
+            and _has_request_capacity(self),
             on_session_finished=(
                 self._mark_replica_activity
                 if self.__dict__.get("_replica_concurrency") is not None
@@ -1062,7 +1063,9 @@ class ModelActor(ModelGenerationMixin, xo.StatelessActor, CancelMixin):
             raise RealtimeError(
                 "unsupported_task", "Model has no realtime input adapter"
             )
-        return self._realtime_runtime.issue_ticket(subject, task)
+        return self._realtime_runtime.issue_ticket(
+            subject, task, reserve=self.__dict__.get("_replica_concurrency") is not None
+        )
 
     async def get_runtime_context_length(self) -> Optional[int]:
         """Read the serving generation, without inferring from registry metadata."""
@@ -2867,7 +2870,12 @@ class ModelActor(ModelGenerationMixin, xo.StatelessActor, CancelMixin):
         spare = self._replica_concurrency - _count_replica_work(self)
         runtime = self.__dict__.get("_realtime_runtime")
         if runtime is not None:
-            spare = min(spare, runtime.limits.max_sessions - runtime.active_count)
+            spare = min(
+                spare,
+                runtime.limits.max_sessions
+                - runtime.active_count
+                - getattr(runtime, "pending_admissions", 0),
+            )
         return ReplicaLoad(
             queued,
             oldest_wait,
