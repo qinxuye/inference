@@ -14,16 +14,22 @@ import asyncio
 import copy
 import io
 import json
+import platform
 import time
 from contextlib import aclosing
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import numpy as np
 
 from ...core.exceptions import InvalidModelRequestError
 from ...core.replica_load import EngineLoad
+from ..utils import has_cuda_device
+from .engine_family import AudioEngineModel
 from .native_async import NativeAsyncAudioModel
+
+if TYPE_CHECKING:
+    from .core import AudioModelFamilyV2
 
 
 class VLLMOmniTTSModel(NativeAsyncAudioModel):
@@ -286,3 +292,25 @@ class VLLMOmniTTSModel(NativeAsyncAudioModel):
                         yield (np.clip(chunk, -1, 1) * 32767).astype("<i2").tobytes()
         if not any_audio:
             raise RuntimeError("Qwen3-TTS returned no audio")
+
+
+class VLLMQwen3TTSAudioModel(VLLMOmniTTSModel, AudioEngineModel):
+    required_libs = ("vllm", "vllm_omni")
+    replica_autoscaling = "native"
+
+    @classmethod
+    def match(cls, model_family: "AudioModelFamilyV2") -> bool:
+        return (
+            platform.system() == "Linux"
+            and has_cuda_device()
+            and cls.is_model_family_supported(model_family)
+        )
+
+    @classmethod
+    def is_model_family_supported(cls, model_family: "AudioModelFamilyV2") -> bool:
+        return (
+            model_family.model_family == "qwen3_tts"
+            and model_family.model_format == "pytorch"
+            and model_family.model_name
+            in {"Qwen3-TTS-12Hz-0.6B-CustomVoice", "Qwen3-TTS-12Hz-1.7B-CustomVoice"}
+        )
