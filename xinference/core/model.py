@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from .realtime.runtime import RealtimeRuntime
     from .worker import WorkerActor
     from ..model.llm.core import LLM
+    from ..model.llm.vllm.core import VLLMModel as VLLMBackend
     from ..model.llm.weight_cache import WeightCachedModel
     import PIL
 
@@ -644,7 +645,7 @@ class ModelActor(ModelGenerationMixin, xo.StatelessActor, CancelMixin):
 
         if self.is_vllm_backend():
             self._xavier_config = xavier_config
-            self._model.set_xavier_config(xavier_config)
+            cast("VLLMBackend", self._model).set_xavier_config(xavier_config)
             self._transfer_ref = None
 
     async def __post_create__(self):
