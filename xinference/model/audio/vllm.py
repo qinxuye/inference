@@ -17,12 +17,13 @@ from __future__ import annotations
 
 import asyncio
 import io
+import platform
 import re
 import time
 from collections import deque
 from contextlib import aclosing, suppress
 from types import SimpleNamespace
-from typing import Any, Dict, NamedTuple, Optional
+from typing import TYPE_CHECKING, Any, Dict, NamedTuple, Optional
 
 import numpy as np
 
@@ -30,8 +31,13 @@ from ...core.exceptions import InvalidAudioInputError, InvalidModelRequestError
 from ...core.realtime.protocol import RealtimeError
 from ...core.replica_load import EngineLoad
 from ..realtime import RealtimeSession
+from ..utils import has_cuda_device
 from ..vllm_load import VLLMSchedulerLoad
+from .engine_family import AudioEngineModel
 from .native_async import NativeAsyncAudioModel, settle_request
+
+if TYPE_CHECKING:
+    from .core import AudioModelFamilyV2
 
 PCM_FORMAT = {"encoding": "pcm_s16le", "sample_rate": 16000, "channels": 1}
 # Qwen3-ASR's language contract differs from Whisper's language table.
@@ -600,3 +606,23 @@ class VLLMASRSession(RealtimeSession):
         self._pending.clear()
         self._frames.clear()
         self._padding.clear()
+
+
+class VLLMQwen3ASRAudioModel(VLLMQwen3ASRModel, AudioEngineModel):
+    required_libs = ("vllm", "silero_vad", "onnxruntime")
+    replica_autoscaling = "native"
+
+    @classmethod
+    def match(cls, model_family: "AudioModelFamilyV2") -> bool:
+        if platform.system() != "Linux":
+            return False
+        if not has_cuda_device():
+            return False
+        return cls.is_model_family_supported(model_family)
+
+    @classmethod
+    def is_model_family_supported(cls, model_family: "AudioModelFamilyV2") -> bool:
+        return (
+            model_family.model_family == "qwen3_asr"
+            and model_family.model_format == "pytorch"
+        )
