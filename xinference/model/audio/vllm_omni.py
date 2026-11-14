@@ -72,11 +72,14 @@ class VLLMOmniTTSModel(NativeAsyncAudioModel):
         )
         self._engine = AsyncOmni(model=self._model_path, **options)
 
-    def get_engine_load(self) -> Optional[EngineLoad]:
+    async def get_engine_load(self) -> Optional[EngineLoad]:
         if not self._report_load or self._engine is None or self._stopping:
             return None
-        self._engine.check_health()
-        engine = self._engine.engine
+        runner = self._engine
+        await runner.check_health()
+        if self._engine is not runner or self._stopping:
+            return None
+        engine = runner.engine
         # AsyncOmni's per-instance counters include stage scheduler waiting.
         # Its dispatched counter also includes jobs waiting inside a stage.
         dispatched = engine._running_counter.value
